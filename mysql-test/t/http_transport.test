@@ -1,0 +1,58 @@
+# =============================================================================
+# http_transport.test -- vsql_stat_ch (transport=http): install, capture, and flush pipeline
+#
+# Verifies the full in-process pipeline WITHOUT any external ClickHouse:
+#  - the extension installs and registers its sysvars/statusvars
+#  - enabling it and running a query captures an event (events_captured > 0)
+#  - the background worker runs and attempts delivery: pointed at a dead
+#    endpoint, its insert fails and flush_errors advances (proving capture ->
+#    queue -> worker -> send was exercised end to end, minus the ClickHouse side)
+#  - uninstall is clean
+#
+# Actual delivery into ClickHouse (a successful insert + body shape) is covered
+# by a separate, skip-gated `live` test against a real ClickHouse -- kept out of
+# the default suite so this test needs no network server and cannot hang.
+# =============================================================================
+
+--source include/not_windows.inc
+
+--echo # Install the extension.
+INSTALL EXTENSION vsql_stat_ch;
+SET GLOBAL vsql_stat_ch.transport = 'http';
+
+--echo # Sysvars registered (defaults).
+SHOW VARIABLES LIKE 'vsql_stat_ch.%';
+
+--echo # Point at a dead endpoint (nothing listening) and enable capture with a
+--echo # short flush interval so the worker attempts a delivery quickly.
+--disable_query_log
+SET GLOBAL vsql_stat_ch.clickhouse_url = 'http://127.0.0.1:1';
+SET GLOBAL vsql_stat_ch.flush_interval_ms = 100;
+SET GLOBAL vsql_stat_ch.http_timeout_secs = 2;
+SET GLOBAL vsql_stat_ch.batch_max = 10;
+SET GLOBAL vsql_stat_ch.enabled = ON;
+--enable_query_log
+
+--echo # Run a query; the POSTEXECUTE hook should capture it.
+SELECT 'vsql_stat_probe_marker' AS marker;
+
+--echo # events_captured advances (capture works, no network needed).
+--let $wait_timeout = 10
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.events_captured'
+--source include/wait_condition.inc
+SELECT VARIABLE_VALUE > 0 AS events_captured_positive
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.events_captured';
+
+--echo # The worker ran and attempted delivery to the dead endpoint, so
+--echo # flush_errors advances -- proving hook -> queue -> worker -> send fired.
+--let $wait_timeout = 15
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors'
+--source include/wait_condition.inc
+SELECT VARIABLE_VALUE > 0 AS flush_attempted
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+
+--echo # Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;

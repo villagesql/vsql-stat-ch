@@ -1,0 +1,24 @@
+# A fresh table for this run; drop any prior rows so the readback is exact.
+# Install and point the HTTP sink at the live ClickHouse.
+INSTALL EXTENSION vsql_stat_ch;
+SET GLOBAL vsql_stat_ch.transport = 'http';
+# Run a query with a unique marker; the POSTEXECUTE hook captures it and
+# the worker POSTs it to ClickHouse.
+SELECT 'vsql_stat_live_marker' AS marker;
+marker
+vsql_stat_live_marker
+# Wait until the worker reports it archived at least one event.
+# No flush errors: delivery to the live endpoint succeeded.
+SELECT VARIABLE_VALUE = 0 AS no_flush_errors
+FROM performance_schema.global_status
+WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+no_flush_errors
+1
+# ClickHouse may not have the insert queryable the instant the HTTP POST
+# returns; poll the row count until the marker appears (or time out).
+# The marker row is present in ClickHouse with the fields the sink sent.
+user	in_transaction	status	query
+root	0	0	SELECT \'vsql_stat_live_marker\' AS marker
+# Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;

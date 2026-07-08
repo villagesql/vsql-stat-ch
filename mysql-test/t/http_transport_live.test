@@ -1,0 +1,85 @@
+# =============================================================================
+# http_transport_live.test -- vsql_stat_ch (transport=http) against a REAL ClickHouse (skip-gated)
+#
+# Proves the full path that http.test cannot: capture a query, ship it via the
+# background worker, and have the row actually land in ClickHouse -- then read
+# it back and assert the payload (including in_transaction).
+#
+# This test only runs when the env var VSQL_STAT_CH_URL points at a reachable
+# ClickHouse HTTP endpoint (e.g. http://127.0.0.1:8123). When it is unset the
+# test skips, so the default suite stays hermetic and can never hang on a
+# missing network service. CI sets it via a ClickHouse service container.
+#
+# curl is used directly (via --exec) for the ClickHouse side because MTR has no
+# HTTP client; the extension itself uses libcurl.
+# =============================================================================
+
+--source include/not_windows.inc
+
+# Skip BEFORE touching any state (no temp file -- a leftover file would trip
+# MTR's check-testcase on the skip path). mysqltest expands $ENVVAR directly.
+if (!$VSQL_STAT_CH_URL) {
+  --skip VSQL_STAT_CH_URL not set: skipping live ClickHouse test
+}
+--let $ch_url = $VSQL_STAT_CH_URL
+
+--echo # A fresh table for this run; drop any prior rows so the readback is exact.
+--exec curl -s "$ch_url/" --data-binary "CREATE TABLE IF NOT EXISTS default.events_raw (query String, user String, client_ip String, schema String, sql_command String, connection_id UInt64, in_transaction UInt8, query_start_utime UInt64, query_time_secs Float64, lock_time_secs Float64, rows_sent UInt64, rows_examined UInt64, rows_affected UInt64, warning_count UInt64, status Int32, digest_text String, sqlstate String, error_message String, port UInt16, bytes_sent UInt64, bytes_received UInt64, select_full_join UInt64, select_full_range_join UInt64, select_range UInt64, select_range_check UInt64, select_scan UInt64, sort_merge_passes UInt64, sort_range UInt64, sort_rows UInt64, sort_scan UInt64, created_tmp_tables UInt64, created_tmp_disk_tables UInt64, no_index_used UInt8, no_good_index_used UInt8) ENGINE = MergeTree ORDER BY (query_start_utime)"
+--exec curl -s "$ch_url/" --data-binary "TRUNCATE TABLE default.events_raw"
+
+--echo # Install and point the HTTP sink at the live ClickHouse.
+INSTALL EXTENSION vsql_stat_ch;
+SET GLOBAL vsql_stat_ch.transport = 'http';
+
+--disable_query_log
+eval SET GLOBAL vsql_stat_ch.clickhouse_url = '$ch_url';
+SET GLOBAL vsql_stat_ch.flush_interval_ms = 100;
+SET GLOBAL vsql_stat_ch.http_timeout_secs = 5;
+SET GLOBAL vsql_stat_ch.batch_max = 1;
+SET GLOBAL vsql_stat_ch.enabled = ON;
+--enable_query_log
+
+--echo # Run a query with a unique marker; the POSTEXECUTE hook captures it and
+--echo # the worker POSTs it to ClickHouse.
+SELECT 'vsql_stat_live_marker' AS marker;
+
+--echo # Wait until the worker reports it archived at least one event.
+--let $wait_timeout = 20
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.events_archived'
+--source include/wait_condition.inc
+
+--echo # No flush errors: delivery to the live endpoint succeeded.
+SELECT VARIABLE_VALUE = 0 AS no_flush_errors
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+
+# The stored `query` column is the full SQL text ("SELECT '<marker>' AS
+# marker"), not the bare marker, so match with LIKE on the marker substring.
+# The %25 in the URL is a literal % (SQL LIKE wildcard).
+--echo # ClickHouse may not have the insert queryable the instant the HTTP POST
+--echo # returns; poll the row count until the marker appears (or time out).
+--let $ch_count_file = $MYSQL_TMP_DIR/ch_count.txt
+--let $ch_count_q = SELECT%20count()%20FROM%20default.events_raw%20WHERE%20query%20LIKE%20%27%25vsql_stat_live_marker%25%27
+--let $ch_marker_count = 0
+--let $tries = 0
+while ($ch_marker_count == 0)
+{
+  --exec sh -c "sleep 0.3"
+  --exec curl -s "$ch_url/?query=$ch_count_q" > $ch_count_file
+  --let $ch_marker_count = `SELECT TRIM(load_file('$ch_count_file')) + 0`
+  --inc $tries
+  if ($tries == 30)
+  {
+    --die ClickHouse did not receive the marker row within timeout
+  }
+}
+
+--echo # The marker row is present in ClickHouse with the fields the sink sent.
+--exec curl -s "$ch_url/?query=SELECT%20user%2C%20in_transaction%2C%20status%2C%20query%20FROM%20default.events_raw%20WHERE%20query%20LIKE%20%27%25vsql_stat_live_marker%25%27%20FORMAT%20TabSeparatedWithNames"
+
+--echo # Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;
+
+# Remove the temp file this test created so mtr's post-test state check passes.
+--remove_file $ch_count_file

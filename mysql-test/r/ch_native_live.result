@@ -1,0 +1,24 @@
+# A fresh LowCardinality-schema table for this run.
+# Install and point the native sink at the live ClickHouse (native port).
+INSTALL EXTENSION vsql_stat_ch;
+# Run a query with a unique marker; the POSTEXECUTE hook captures it and
+# the worker sends it over the native protocol as a columnar block.
+SELECT 'vsql_stat_native_marker' AS marker;
+marker
+vsql_stat_native_marker
+# Wait until the worker reports it archived at least one event.
+# No flush errors: native delivery succeeded.
+SELECT VARIABLE_VALUE = 0 AS no_flush_errors
+FROM performance_schema.global_status
+WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+no_flush_errors
+1
+# Poll the row count until the marker appears in ClickHouse (or time out).
+# The marker row is present in ClickHouse with the fields the sink sent.
+# user/schema/sql_command are LowCardinality columns; they read back as
+# ordinary strings, proving the dictionary encoding round-tripped.
+user	in_transaction	status	query
+root	0	0	SELECT \'vsql_stat_native_marker\' AS marker
+# Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;

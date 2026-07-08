@@ -1,0 +1,19 @@
+name: test
+on: [pull_request, workflow_dispatch]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          submodules: recursive
+      - name: Install lz4 and zstd
+        run: sudo apt-get install -y --no-install-recommends liblz4-dev libzstd-dev
+      - uses: villagesql/extension-actions/cpp@main
+        with:
+          extension-name: vsql_stat_ch
+          github-token: ${{ secrets.GITHUB_TOKEN }}

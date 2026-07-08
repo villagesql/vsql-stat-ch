@@ -1,0 +1,111 @@
+# =============================================================================
+# ch_native_live.test -- vsql_stat_ch against a REAL ClickHouse
+#                        (skip-gated)
+#
+# Proves the full native-protocol path that ch_native.test cannot: capture a
+# query, ship it via the background worker over the ClickHouse native protocol
+# (port 9000) as a columnar block (with LowCardinality dictionary columns), and
+# have the row actually land in ClickHouse -- then read it back and assert the
+# payload.
+#
+# Gating: runs only when VSQL_STAT_CH_URL points at a reachable ClickHouse HTTP
+# endpoint (e.g. http://127.0.0.1:8123); otherwise it skips, so the default
+# suite stays hermetic and cannot hang. The native INSERT uses the native port
+# (VSQL_STAT_CH_NATIVE_PORT, default 9000); the HTTP URL is used only for table
+# setup and reading the row back with curl (MTR has no ClickHouse client).
+#
+# This test uses its own table (events_raw_native) with a LowCardinality schema,
+# independent of the HTTP sink's plain-String events_raw, so the two live tests
+# do not collide on table shape.
+# =============================================================================
+
+--source include/not_windows.inc
+
+# Skip BEFORE touching any state or writing any file -- a leftover temp file
+# would trip MTR's check-testcase on the skip path. mysqltest expands $ENVVAR
+# directly.
+if (!$VSQL_STAT_CH_URL) {
+  --skip VSQL_STAT_CH_URL not set: skipping live ClickHouse test
+}
+
+# Not skipping: derive the native host (HTTP URL host, stripped of scheme/port)
+# and port into an .inc, sourced below. This .inc is cleaned up at the end of
+# the test; it is only ever written on the run path, never on the skip path.
+--perl
+my $url = $ENV{'VSQL_STAT_CH_URL'};
+my $nport = $ENV{'VSQL_STAT_CH_NATIVE_PORT'} // '9000';
+my $host = $url;
+$host =~ s{^\w+://}{};
+$host =~ s{:.*$}{};
+$host =~ s{/.*$}{};
+open(F, '>', "$ENV{MYSQL_TMP_DIR}/chn_cfg.inc") or die $!;
+print F "--let \$ch_url = $url\n";
+print F "--let \$ch_host = $host\n";
+print F "--let \$ch_nport = $nport\n";
+close(F);
+EOF
+--source $MYSQL_TMP_DIR/chn_cfg.inc
+
+--echo # A fresh LowCardinality-schema table for this run.
+--exec curl -s "$ch_url/" --data-binary "CREATE TABLE IF NOT EXISTS default.events_raw_native (query String, user LowCardinality(String), client_ip LowCardinality(String), schema LowCardinality(String), sql_command LowCardinality(String), connection_id UInt64, in_transaction UInt8, query_start_utime UInt64, query_time_secs Float64, lock_time_secs Float64, rows_sent UInt64, rows_examined UInt64, rows_affected UInt64, warning_count UInt64, status Int32, digest_text String, sqlstate String, error_message String, port UInt16, bytes_sent UInt64, bytes_received UInt64, select_full_join UInt64, select_full_range_join UInt64, select_range UInt64, select_range_check UInt64, select_scan UInt64, sort_merge_passes UInt64, sort_range UInt64, sort_rows UInt64, sort_scan UInt64, created_tmp_tables UInt64, created_tmp_disk_tables UInt64, no_index_used UInt8, no_good_index_used UInt8) ENGINE = MergeTree ORDER BY (query_start_utime)"
+--exec curl -s "$ch_url/" --data-binary "TRUNCATE TABLE default.events_raw_native"
+
+--echo # Install and point the native sink at the live ClickHouse (native port).
+INSTALL EXTENSION vsql_stat_ch;
+
+--disable_query_log
+eval SET GLOBAL vsql_stat_ch.clickhouse_host = '$ch_host';
+eval SET GLOBAL vsql_stat_ch.clickhouse_port = $ch_nport;
+SET GLOBAL vsql_stat_ch.clickhouse_table = 'events_raw_native';
+SET GLOBAL vsql_stat_ch.compression = 1;
+SET GLOBAL vsql_stat_ch.flush_interval_ms = 100;
+SET GLOBAL vsql_stat_ch.batch_max = 1;
+SET GLOBAL vsql_stat_ch.enabled = ON;
+--enable_query_log
+
+--echo # Run a query with a unique marker; the POSTEXECUTE hook captures it and
+--echo # the worker sends it over the native protocol as a columnar block.
+SELECT 'vsql_stat_native_marker' AS marker;
+
+--echo # Wait until the worker reports it archived at least one event.
+--let $wait_timeout = 20
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.events_archived'
+--source include/wait_condition.inc
+
+--echo # No flush errors: native delivery succeeded.
+SELECT VARIABLE_VALUE = 0 AS no_flush_errors
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+
+# The stored `query` column is the full SQL text ("SELECT '<marker>' AS
+# marker"), not the bare marker, so match with LIKE on the marker substring.
+# The %25 in the URL is a literal % (SQL LIKE wildcard).
+--echo # Poll the row count until the marker appears in ClickHouse (or time out).
+--let $chn_count_file = $MYSQL_TMP_DIR/chn_count.txt
+--let $chn_count_q = SELECT%20count()%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27
+--let $chn_marker_count = 0
+--let $tries = 0
+while ($chn_marker_count == 0)
+{
+  --exec sh -c "sleep 0.3"
+  --exec curl -s "$ch_url/?query=$chn_count_q" > $chn_count_file
+  --let $chn_marker_count = `SELECT TRIM(load_file('$chn_count_file')) + 0`
+  --inc $tries
+  if ($tries == 30)
+  {
+    --die ClickHouse did not receive the native marker row within timeout
+  }
+}
+
+--echo # The marker row is present in ClickHouse with the fields the sink sent.
+--echo # user/schema/sql_command are LowCardinality columns; they read back as
+--echo # ordinary strings, proving the dictionary encoding round-tripped.
+--exec curl -s "$ch_url/?query=SELECT%20user%2C%20in_transaction%2C%20status%2C%20query%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
+
+--echo # Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;
+
+# Remove the temp files this test created so mtr's post-test state check passes.
+--remove_file $MYSQL_TMP_DIR/chn_cfg.inc
+--remove_file $chn_count_file

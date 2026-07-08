@@ -1,0 +1,60 @@
+# =============================================================================
+# ch_native.test -- vsql_stat_ch: install, capture, and flush pipeline
+#
+# Verifies the full in-process pipeline WITHOUT a real ClickHouse:
+#  - the extension installs and registers its sysvars/statusvars
+#  - enabling it and running a query captures an event (events_captured > 0)
+#  - the background worker runs and attempts native-protocol delivery: pointed
+#    at a dead host, the bounded connect fails and flush_errors advances
+#    (proving capture -> queue -> worker -> send was exercised end to end, minus
+#    the ClickHouse side)
+#  - uninstall is clean
+#
+# Actual delivery into ClickHouse over the native protocol (a successful INSERT
+# + columnar block, LowCardinality columns) is covered by the separate,
+# skip-gated ch_native_live test against a real ClickHouse -- kept out of the
+# default suite so this test needs no server and cannot hang.
+# =============================================================================
+
+--source include/not_windows.inc
+
+--echo # Install the extension.
+INSTALL EXTENSION vsql_stat_ch;
+
+--echo # Sysvars registered (defaults).
+SHOW VARIABLES LIKE 'vsql_stat_ch.%';
+
+--echo # Point at a dead host (nothing listening / unroutable port) and enable
+--echo # capture with a short flush interval so the worker attempts a delivery
+--echo # quickly. The bounded connect makes the failure fast, not a hang.
+--disable_query_log
+SET GLOBAL vsql_stat_ch.clickhouse_host = '127.0.0.1';
+SET GLOBAL vsql_stat_ch.clickhouse_port = 1;
+SET GLOBAL vsql_stat_ch.flush_interval_ms = 100;
+SET GLOBAL vsql_stat_ch.batch_max = 10;
+SET GLOBAL vsql_stat_ch.enabled = ON;
+--enable_query_log
+
+--echo # Run a query; the POSTEXECUTE hook should capture it.
+SELECT 'vsql_stat_probe_marker' AS marker;
+
+--echo # events_captured advances (capture works, no network needed).
+--let $wait_timeout = 10
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.events_captured'
+--source include/wait_condition.inc
+SELECT VARIABLE_VALUE > 0 AS events_captured_positive
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.events_captured';
+
+--echo # The worker ran and attempted delivery to the dead host, so flush_errors
+--echo # advances -- proving hook -> queue -> worker -> connect fired.
+--let $wait_timeout = 15
+--let $wait_condition = SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors'
+--source include/wait_condition.inc
+SELECT VARIABLE_VALUE > 0 AS flush_attempted
+  FROM performance_schema.global_status
+  WHERE VARIABLE_NAME = 'vsql_stat_ch.flush_errors';
+
+--echo # Disable and uninstall cleanly.
+SET GLOBAL vsql_stat_ch.enabled = OFF;
+UNINSTALL EXTENSION vsql_stat_ch;

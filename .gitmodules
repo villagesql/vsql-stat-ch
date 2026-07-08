@@ -1,0 +1,6 @@
+[submodule "third_party/clickhouse-c"]
+	path = third_party/clickhouse-c
+	url = https://github.com/ClickHouse/clickhouse-c.git
+[submodule "core"]
+	path = core
+	url = https://github.com/villagesql/vsql-stat-core.git
