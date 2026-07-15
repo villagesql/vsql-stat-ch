@@ -12,8 +12,13 @@
 #
 # Usage:
 #   export VillageSQL_BUILD_DIR=$HOME/build/villagesql
-#   ./test.sh            # build + run the MTR suite
-#   RECORD=1 ./test.sh   # build + record the .result files
+#   ./test.sh                        # build + run the whole MTR suite
+#   ./test.sh ch_native              # build + run a single test by name
+#   ./test.sh ch_native http_transport   # build + run several named tests
+#   RECORD=1 ./test.sh ch_native     # build + record one test's .result
+#
+# Any positional arguments are passed through to mysql-test-run.pl as test
+# names; with none, the whole suite runs.
 
 set -euo pipefail
 
@@ -75,6 +80,7 @@ perl ./mysql-test/mysql-test-run.pl \
     --parallel=1 \
     --nounit-tests \
     --mysqld=--veb-dir="$VEB_DIR" \
-    ${MTR_RECORD_ARG[@]+"${MTR_RECORD_ARG[@]}"}
+    ${MTR_RECORD_ARG[@]+"${MTR_RECORD_ARG[@]}"} \
+    "$@"
 
 log "Done."
