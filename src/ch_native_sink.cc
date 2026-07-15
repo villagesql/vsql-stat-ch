@@ -323,12 +323,24 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
 
   // Start the INSERT: the server replies with a header (empty) Data block
   // describing the target columns, which we drain before sending our block.
-  const std::string insert = "INSERT INTO " + database + "." + table +
-                             " (query, user, client_ip, schema, sql_command, "
-                             "connection_id, in_transaction, "
-                             "query_start_utime, query_time_secs, "
-                             "lock_time_secs, rows_sent, rows_examined, "
-                             "rows_affected, warning_count, status) VALUES";
+  //
+  // The column list MUST name every column we append to the block below (see
+  // the add_str/add_lc/add_fixed calls), in the same order. ClickHouse maps the
+  // sent block against the columns named here; any column we append but do NOT
+  // name is dropped by the server (it silently lands as the column default).
+  // A short list here was the cause of digest_text / sqlstate / error_message /
+  // port / bytes_* / select_* / sort_* / created_tmp_* / no_*_used arriving
+  // empty: they are columns 16..34, and only the first 15 were named.
+  const std::string insert =
+      "INSERT INTO " + database + "." + table +
+      " (query, user, client_ip, schema, sql_command, connection_id, "
+      "in_transaction, query_start_utime, query_time_secs, lock_time_secs, "
+      "rows_sent, rows_examined, rows_affected, warning_count, status, "
+      "digest_text, sqlstate, error_message, port, bytes_sent, bytes_received, "
+      "select_full_join, select_full_range_join, select_range, "
+      "select_range_check, select_scan, sort_merge_passes, sort_range, "
+      "sort_rows, sort_scan, created_tmp_tables, created_tmp_disk_tables, "
+      "no_index_used, no_good_index_used) VALUES";
   if (chc_client_send_query(conn_->client, insert.c_str(), insert.size(),
                             nullptr, 0, &cerr) != CHC_OK) {
     err = std::string("send_query failed: ") + cerr.msg;

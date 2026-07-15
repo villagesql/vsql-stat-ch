@@ -1,4 +1,8 @@
-# A fresh LowCardinality-schema table for this run.
+# A fresh LowCardinality-schema table for this run. DROP first (not just
+# TRUNCATE) so a table left by an OLDER run with a stale column set is
+# rebuilt to the current schema -- otherwise CREATE IF NOT EXISTS silently
+# reuses the old shape and a newly-asserted column (e.g. digest_text) is
+# missing.
 # Install and point the native sink at the live ClickHouse (native port).
 INSTALL EXTENSION vsql_stat_ch;
 # Run a query with a unique marker; the POSTEXECUTE hook captures it and
@@ -19,6 +23,14 @@ no_flush_errors
 # ordinary strings, proving the dictionary encoding round-tripped.
 user	in_transaction	status	query
 root	0	0	SELECT \'vsql_stat_native_marker\' AS marker
+# digest_text is populated (the normalized statement, e.g. "SELECT ? AS
+# marker"), NOT empty -- and note it arrives even though the
+# statements_digest consumer was forced OFF above, proving the digest
+# comes from thd->m_digest (set on every COM_QUERY) and not from P_S
+# aggregation. Assert non-empty rather than an exact value (the digest is
+# normalized, and its precise text is a server/P_S detail we do not pin).
+digest_present
+1
 # Disable and uninstall cleanly.
 SET GLOBAL vsql_stat_ch.enabled = OFF;
 UNINSTALL EXTENSION vsql_stat_ch;

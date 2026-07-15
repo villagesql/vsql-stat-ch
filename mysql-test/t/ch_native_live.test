@@ -46,12 +46,29 @@ close(F);
 EOF
 --source $MYSQL_TMP_DIR/chn_cfg.inc
 
---echo # A fresh LowCardinality-schema table for this run.
---exec curl -s "$ch_url/" --data-binary "CREATE TABLE IF NOT EXISTS default.events_raw_native (query String, user LowCardinality(String), client_ip LowCardinality(String), schema LowCardinality(String), sql_command LowCardinality(String), connection_id UInt64, in_transaction UInt8, query_start_utime UInt64, query_time_secs Float64, lock_time_secs Float64, rows_sent UInt64, rows_examined UInt64, rows_affected UInt64, warning_count UInt64, status Int32, digest_text String, sqlstate String, error_message String, port UInt16, bytes_sent UInt64, bytes_received UInt64, select_full_join UInt64, select_full_range_join UInt64, select_range UInt64, select_range_check UInt64, select_scan UInt64, sort_merge_passes UInt64, sort_range UInt64, sort_rows UInt64, sort_scan UInt64, created_tmp_tables UInt64, created_tmp_disk_tables UInt64, no_index_used UInt8, no_good_index_used UInt8) ENGINE = MergeTree ORDER BY (query_start_utime)"
---exec curl -s "$ch_url/" --data-binary "TRUNCATE TABLE default.events_raw_native"
+--echo # A fresh LowCardinality-schema table for this run. DROP first (not just
+--echo # TRUNCATE) so a table left by an OLDER run with a stale column set is
+--echo # rebuilt to the current schema -- otherwise CREATE IF NOT EXISTS silently
+--echo # reuses the old shape and a newly-asserted column (e.g. digest_text) is
+--echo # missing.
+--exec curl -s "$ch_url/" --data-binary "DROP TABLE IF EXISTS default.events_raw_native"
+--exec curl -s "$ch_url/" --data-binary "CREATE TABLE default.events_raw_native (query String, user LowCardinality(String), client_ip LowCardinality(String), schema LowCardinality(String), sql_command LowCardinality(String), connection_id UInt64, in_transaction UInt8, query_start_utime UInt64, query_time_secs Float64, lock_time_secs Float64, rows_sent UInt64, rows_examined UInt64, rows_affected UInt64, warning_count UInt64, status Int32, digest_text String, sqlstate String, error_message String, port UInt16, bytes_sent UInt64, bytes_received UInt64, select_full_join UInt64, select_full_range_join UInt64, select_range UInt64, select_range_check UInt64, select_scan UInt64, sort_merge_passes UInt64, sort_range UInt64, sort_rows UInt64, sort_scan UInt64, created_tmp_tables UInt64, created_tmp_disk_tables UInt64, no_index_used UInt8, no_good_index_used UInt8) ENGINE = MergeTree ORDER BY (query_start_utime)"
 
 --echo # Install and point the native sink at the live ClickHouse (native port).
 INSTALL EXTENSION vsql_stat_ch;
+
+# Prove digest_text does NOT depend on the Performance Schema statements_digest
+# consumer: force it OFF, then assert below that the digest still arrives. The
+# server sets thd->m_digest unconditionally on every COM_QUERY (the consumer
+# flag only governs P_S aggregation into events_statements_summary_by_digest,
+# which our hook does not read). The one real gate is max_digest_length > 0
+# (default 1024, read-only). Save/restore the consumer's original state.
+--disable_query_log
+SELECT enabled INTO @orig_stmt_digest
+  FROM performance_schema.setup_consumers WHERE NAME = 'statements_digest';
+UPDATE performance_schema.setup_consumers
+  SET enabled = 'NO' WHERE NAME = 'statements_digest';
+--enable_query_log
 
 --disable_query_log
 eval SET GLOBAL vsql_stat_ch.clickhouse_host = '$ch_host';
@@ -102,9 +119,23 @@ while ($chn_marker_count == 0)
 --echo # ordinary strings, proving the dictionary encoding round-tripped.
 --exec curl -s "$ch_url/?query=SELECT%20user%2C%20in_transaction%2C%20status%2C%20query%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
 
+--echo # digest_text is populated (the normalized statement, e.g. "SELECT ? AS
+--echo # marker"), NOT empty -- and note it arrives even though the
+--echo # statements_digest consumer was forced OFF above, proving the digest
+--echo # comes from thd->m_digest (set on every COM_QUERY) and not from P_S
+--echo # aggregation. Assert non-empty rather than an exact value (the digest is
+--echo # normalized, and its precise text is a server/P_S detail we do not pin).
+--exec curl -s "$ch_url/?query=SELECT%20digest_text%20%21%3D%20%27%27%20AS%20digest_present%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
+
 --echo # Disable and uninstall cleanly.
 SET GLOBAL vsql_stat_ch.enabled = OFF;
 UNINSTALL EXTENSION vsql_stat_ch;
+
+# Restore the statements_digest consumer to its original state.
+--disable_query_log
+UPDATE performance_schema.setup_consumers
+  SET enabled = @orig_stmt_digest WHERE NAME = 'statements_digest';
+--enable_query_log
 
 # Remove the temp files this test created so mtr's post-test state check passes.
 --remove_file $MYSQL_TMP_DIR/chn_cfg.inc
