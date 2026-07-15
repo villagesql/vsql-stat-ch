@@ -325,19 +325,18 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   // describing the target columns, which we drain before sending our block.
   //
   // The column list MUST name every column we append to the block below (see
-  // the add_str/add_lc/add_fixed calls), in the same order. ClickHouse maps the
-  // sent block against the columns named here; any column we append but do NOT
-  // name is dropped by the server (it silently lands as the column default).
-  // A short list here was the cause of digest_text / sqlstate / error_message /
-  // port / bytes_* / select_* / sort_* / created_tmp_* / no_*_used arriving
-  // empty: they are columns 16..34, and only the first 15 were named.
+  // the add_str/add_lc/add_fixed calls), in the same order and with matching
+  // types. ClickHouse maps the sent block against the columns named here; a
+  // column we append but do not name is dropped (silently lands as the column
+  // default), and a name/type/order mismatch corrupts or rejects the insert.
+  // This list, the add_* sequence, and the events_raw schema are one contract.
   const std::string insert =
       "INSERT INTO " + database + "." + table +
-      " (query, user, client_ip, schema, sql_command, connection_id, "
-      "in_transaction, query_start_utime, query_time_secs, lock_time_secs, "
+      " (event_time, user, client_ip, schema, sql_command, connection_id, "
+      "in_transaction, query_time_secs, lock_time_secs, "
       "rows_sent, rows_examined, rows_affected, warning_count, status, "
-      "digest_text, sqlstate, error_message, port, bytes_sent, bytes_received, "
-      "select_full_join, select_full_range_join, select_range, "
+      "digest_text, query, sqlstate, error_message, port, bytes_sent, "
+      "bytes_received, select_full_join, select_full_range_join, select_range, "
       "select_range_check, select_scan, sort_merge_passes, sort_range, "
       "sort_rows, sort_scan, created_tmp_tables, created_tmp_disk_tables, "
       "no_index_used, no_good_index_used) VALUES";
@@ -392,8 +391,14 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   build_lc_col(
       batch, cs, lc_cmd_k, lc_cmd_dd, lc_cmd_do, lc_cmd_n,
       [](const EventRow &r) -> const std::string & { return r.sql_command; });
+  // sqlstate is LowCardinality(String) in the schema: a 5-char SQLSTATE has few
+  // distinct values, so it dictionary-encodes well.
+  size_t lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n;
+  build_lc_col(
+      batch, cs, lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n,
+      [](const EventRow &r) -> const std::string & { return r.sqlstate; });
 
-  // Plain String columns: query, digest_text, sqlstate, error_message.
+  // Plain String columns: query, digest_text, error_message.
   size_t q_d, q_o;
   build_string_col(
       batch, cs, q_d, q_o,
@@ -402,10 +407,6 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   build_string_col(
       batch, cs, dg_d, dg_o,
       [](const EventRow &r) -> const std::string & { return r.digest_text; });
-  size_t ss_d, ss_o;
-  build_string_col(
-      batch, cs, ss_d, ss_o,
-      [](const EventRow &r) -> const std::string & { return r.sqlstate; });
   size_t em_d, em_o;
   build_string_col(
       batch, cs, em_d, em_o,
@@ -423,6 +424,9 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       fixed_col([](const EventRow &r) { return r.connection_id; });
   const size_t f_txn = fixed_col(
       [](const EventRow &r) -> uint8_t { return r.in_transaction ? 1 : 0; });
+  // event_time is DateTime64(6): an Int64 count of microsecond ticks since
+  // epoch. query_start_utime is already microseconds since epoch, so the value
+  // is sent unchanged (DateTime64(6) tick == 1 microsecond).
   const size_t f_start =
       fixed_col([](const EventRow &r) { return r.query_start_utime; });
   const size_t f_qtime =
@@ -435,53 +439,75 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       fixed_col([](const EventRow &r) { return r.rows_examined; });
   const size_t f_aff =
       fixed_col([](const EventRow &r) { return r.rows_affected; });
-  const size_t f_warn =
-      fixed_col([](const EventRow &r) { return r.warning_count; });
+  // warning_count is UInt32 in the schema (Arnaud's DDL); narrow on emit.
+  const size_t f_warn = fixed_col(
+      [](const EventRow &r) -> uint32_t {
+        return static_cast<uint32_t>(r.warning_count);
+      });
+  // status is UInt16 (the MySQL error code fits; 0 on success).
   const size_t f_status =
-      fixed_col([](const EventRow &r) -> int32_t { return r.status; });
+      fixed_col([](const EventRow &r) -> uint16_t {
+        return static_cast<uint16_t>(r.status);
+      });
   const size_t f_port =
       fixed_col([](const EventRow &r) -> uint16_t { return r.port; });
   const size_t f_bsent =
       fixed_col([](const EventRow &r) { return r.bytes_sent; });
   const size_t f_brecv =
       fixed_col([](const EventRow &r) { return r.bytes_received; });
-  const size_t f_sfj =
-      fixed_col([](const EventRow &r) { return r.select_full_join; });
-  const size_t f_sfrj =
-      fixed_col([](const EventRow &r) { return r.select_full_range_join; });
-  const size_t f_srng =
-      fixed_col([](const EventRow &r) { return r.select_range; });
-  const size_t f_src =
-      fixed_col([](const EventRow &r) { return r.select_range_check; });
-  const size_t f_sscan =
-      fixed_col([](const EventRow &r) { return r.select_scan; });
-  const size_t f_smp =
-      fixed_col([](const EventRow &r) { return r.sort_merge_passes; });
-  const size_t f_sortr =
-      fixed_col([](const EventRow &r) { return r.sort_range; });
+  // The optimizer/sort/tmp counters are UInt32 in the schema (they are small
+  // per-statement deltas); narrow each on emit. sort_rows stays UInt64.
+  const size_t f_sfj = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.select_full_join);
+  });
+  const size_t f_sfrj = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.select_full_range_join);
+  });
+  const size_t f_srng = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.select_range);
+  });
+  const size_t f_src = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.select_range_check);
+  });
+  const size_t f_sscan = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.select_scan);
+  });
+  const size_t f_smp = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.sort_merge_passes);
+  });
+  const size_t f_sortr = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.sort_range);
+  });
   const size_t f_sortrows =
       fixed_col([](const EventRow &r) { return r.sort_rows; });
-  const size_t f_sortscan =
-      fixed_col([](const EventRow &r) { return r.sort_scan; });
-  const size_t f_ctt =
-      fixed_col([](const EventRow &r) { return r.created_tmp_tables; });
-  const size_t f_ctdt =
-      fixed_col([](const EventRow &r) { return r.created_tmp_disk_tables; });
+  const size_t f_sortscan = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.sort_scan);
+  });
+  const size_t f_ctt = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.created_tmp_tables);
+  });
+  const size_t f_ctdt = fixed_col([](const EventRow &r) -> uint32_t {
+    return static_cast<uint32_t>(r.created_tmp_disk_tables);
+  });
   const size_t f_niu = fixed_col(
       [](const EventRow &r) -> uint8_t { return r.no_index_used ? 1 : 0; });
   const size_t f_ngiu = fixed_col([](const EventRow &r) -> uint8_t {
     return r.no_good_index_used ? 1 : 0;
   });
 
-  // Parse the column types once for this block.
-  ScopedType t_lc, t_string, t_u64, t_u16, t_u8, t_f64, t_i32;
+  // Parse the column types once for this block. These match the fixed
+  // events_raw schema (see README / ch_native_live.test): event_time is
+  // DateTime64(6), the flag columns are Bool, the small per-statement counters
+  // are UInt32, and sqlstate is LowCardinality(String).
+  ScopedType t_lc, t_string, t_u64, t_u32, t_u16, t_bool, t_f64, t_dt64;
   if (!parse_type(al, "LowCardinality(String)", t_lc, err) ||
       !parse_type(al, "String", t_string, err) ||
       !parse_type(al, "UInt64", t_u64, err) ||
+      !parse_type(al, "UInt32", t_u32, err) ||
       !parse_type(al, "UInt16", t_u16, err) ||
-      !parse_type(al, "UInt8", t_u8, err) ||
+      !parse_type(al, "Bool", t_bool, err) ||
       !parse_type(al, "Float64", t_f64, err) ||
-      !parse_type(al, "Int32", t_i32, err)) {
+      !parse_type(al, "DateTime64(6)", t_dt64, err)) {
     disconnect();
     return false;
   }
@@ -518,40 +544,41 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
                                         &cerr) == CHC_OK;
   };
 
-  add_str("query", q_d, q_o);
+  // Column order MUST match the INSERT list above and the events_raw schema.
+  add_fixed("event_time", t_dt64.t, f_start);
   add_lc("user", lc_user_k, lc_user_dd, lc_user_do, lc_user_n);
   add_lc("client_ip", lc_ip_k, lc_ip_dd, lc_ip_do, lc_ip_n);
   add_lc("schema", lc_schema_k, lc_schema_dd, lc_schema_do, lc_schema_n);
   add_lc("sql_command", lc_cmd_k, lc_cmd_dd, lc_cmd_do, lc_cmd_n);
   add_fixed("connection_id", t_u64.t, f_conn);
-  add_fixed("in_transaction", t_u8.t, f_txn);
-  add_fixed("query_start_utime", t_u64.t, f_start);
+  add_fixed("in_transaction", t_bool.t, f_txn);
   add_fixed("query_time_secs", t_f64.t, f_qtime);
   add_fixed("lock_time_secs", t_f64.t, f_ltime);
   add_fixed("rows_sent", t_u64.t, f_sent);
   add_fixed("rows_examined", t_u64.t, f_exam);
   add_fixed("rows_affected", t_u64.t, f_aff);
-  add_fixed("warning_count", t_u64.t, f_warn);
-  add_fixed("status", t_i32.t, f_status);
+  add_fixed("warning_count", t_u32.t, f_warn);
+  add_fixed("status", t_u16.t, f_status);
   add_str("digest_text", dg_d, dg_o);
-  add_str("sqlstate", ss_d, ss_o);
+  add_str("query", q_d, q_o);
+  add_lc("sqlstate", lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n);
   add_str("error_message", em_d, em_o);
   add_fixed("port", t_u16.t, f_port);
   add_fixed("bytes_sent", t_u64.t, f_bsent);
   add_fixed("bytes_received", t_u64.t, f_brecv);
-  add_fixed("select_full_join", t_u64.t, f_sfj);
-  add_fixed("select_full_range_join", t_u64.t, f_sfrj);
-  add_fixed("select_range", t_u64.t, f_srng);
-  add_fixed("select_range_check", t_u64.t, f_src);
-  add_fixed("select_scan", t_u64.t, f_sscan);
-  add_fixed("sort_merge_passes", t_u64.t, f_smp);
-  add_fixed("sort_range", t_u64.t, f_sortr);
+  add_fixed("select_full_join", t_u32.t, f_sfj);
+  add_fixed("select_full_range_join", t_u32.t, f_sfrj);
+  add_fixed("select_range", t_u32.t, f_srng);
+  add_fixed("select_range_check", t_u32.t, f_src);
+  add_fixed("select_scan", t_u32.t, f_sscan);
+  add_fixed("sort_merge_passes", t_u32.t, f_smp);
+  add_fixed("sort_range", t_u32.t, f_sortr);
   add_fixed("sort_rows", t_u64.t, f_sortrows);
-  add_fixed("sort_scan", t_u64.t, f_sortscan);
-  add_fixed("created_tmp_tables", t_u64.t, f_ctt);
-  add_fixed("created_tmp_disk_tables", t_u64.t, f_ctdt);
-  add_fixed("no_index_used", t_u8.t, f_niu);
-  add_fixed("no_good_index_used", t_u8.t, f_ngiu);
+  add_fixed("sort_scan", t_u32.t, f_sortscan);
+  add_fixed("created_tmp_tables", t_u32.t, f_ctt);
+  add_fixed("created_tmp_disk_tables", t_u32.t, f_ctdt);
+  add_fixed("no_index_used", t_bool.t, f_niu);
+  add_fixed("no_good_index_used", t_bool.t, f_ngiu);
 
   // Silence unused-index warnings from the reused scratch variables.
   (void)di;

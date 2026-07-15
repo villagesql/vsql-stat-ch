@@ -53,6 +53,12 @@ mkdir -p "$VEB_DIR"
 cp "$SCRIPT_DIR/build/$VEB" "$VEB_DIR/"
 log "VEB staged in $VEB_DIR"
 
+# The live tests curl their table DDL rather than inlining it. CMake generates
+# a per-test .sql (table name substituted) from the one canonical schema
+# (mysql-test/schema/events_raw.sql) into build/schema/. Pass that dir so the
+# tests need not guess it. A schema edit reaches the tests via the next build.
+export VSQL_STAT_CH_SCHEMA_DIR="$SCRIPT_DIR/build/schema"
+
 # Step 3: The live test skips unless VSQL_STAT_CH_URL points at a reachable
 # ClickHouse. Auto-detect a local instance (e.g. the vsql-ch docker container);
 # otherwise the live test skips and the suite stays hermetic.

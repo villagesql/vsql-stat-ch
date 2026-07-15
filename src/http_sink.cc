@@ -102,7 +102,10 @@ std::string build_body(const std::vector<EventRow> &batch) {
     append_kv_str(body, "sql_command", r.sql_command, false);
     append_kv_num(body, "connection_id", r.connection_id);
     append_kv_num(body, "in_transaction", r.in_transaction ? 1 : 0);
-    append_kv_num(body, "query_start_utime", r.query_start_utime);
+    // event_time is DateTime64(6): microsecond ticks since epoch. Our stored
+    // value is already microseconds; ClickHouse's JSONEachRow parser reads a
+    // bare integer into DateTime64(6) as that tick count.
+    append_kv_num(body, "event_time", r.query_start_utime);
     append_kv_dbl(body, "query_time_secs", r.query_time_secs);
     append_kv_dbl(body, "lock_time_secs", r.lock_time_secs);
     append_kv_num(body, "rows_sent", r.rows_sent);
