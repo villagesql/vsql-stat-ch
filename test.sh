@@ -30,7 +30,19 @@ VILLAGESQL_BUILD_DIR="${VillageSQL_BUILD_DIR:-${VILLAGESQL_BUILD_DIR:-}}"
 VEB_DIR="/tmp/${VEB%.veb}-test-veb-$$"
 
 log() { echo "[test] $(date '+%H:%M:%S') - $1"; }
-cleanup() { rm -rf "$VEB_DIR" 2>/dev/null || true; }
+
+# The staged VEB dir is removed on exit. But with --start-and-exit MTR leaves
+# the server running (with --veb-dir pointing here) and this script returns
+# immediately, so the trap would delete the VEB out from under the live server.
+# Set KEEP_TMP=1 to skip cleanup and keep the staged VEB dir; the path is
+# printed so it can be removed by hand later.
+cleanup() {
+    if [[ "${KEEP_TMP:-0}" == "1" ]]; then
+        log "KEEP_TMP=1 -- leaving staged VEB dir: $VEB_DIR"
+        return
+    fi
+    rm -rf "$VEB_DIR" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 if [[ -z "$VILLAGESQL_BUILD_DIR" ]]; then
