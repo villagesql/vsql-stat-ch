@@ -4,7 +4,7 @@
 --   * generated per-test by CMake (table name substituted) into build/schema/
 --     and curled into ClickHouse by the live MTR tests (ch_native_live,
 --     http_transport_live) as their table setup;
---   * mirrored in README.md for operators (keep the two in sync by hand);
+--   * linked (not copied) from README.md, which points operators here;
 --   * the shape the native sink's block builder (src/ch_native_sink.cc) writes.
 --     The column NAMES, TYPES, and ORDER below are a contract with that builder.
 --
@@ -53,4 +53,5 @@ ENGINE = MergeTree
 PARTITION BY toDate(event_time)
 ORDER BY (event_time)
 TTL toDateTime(event_time) + INTERVAL 90 DAY DELETE,
-    toDateTime(event_time) + INTERVAL 1 DAY RECOMPRESS CODEC(ZSTD(8));
+    toDateTime(event_time) + INTERVAL 1 DAY RECOMPRESS CODEC(ZSTD(8))
+COMMENT 'Per-statement telemetry from VillageSQL, one row per executed statement, exported by the vsql_stat_ch extension.';

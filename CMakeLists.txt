@@ -103,15 +103,15 @@ VEF_CREATE_VEB(
     MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
 )
 
-# Single-source the ClickHouse schema. mysql-test/schema/events_raw.sql is the
-# one canonical DDL (also embedded in README, and the shape the native sink's
-# block builder targets). The live MTR tests need the table under distinct
-# names so they never collide; rather than inline the DDL in each test (which
-# drifts), generate a per-test .sql here by substituting the table name. Tests
-# curl the generated file (path via $VSQL_STAT_CH_SCHEMA_DIR, exported by
-# test.sh). Regenerated on every configure, so a schema edit reaches the tests
-# with no manual sync.
-set(CH_SCHEMA_SRC ${CMAKE_CURRENT_SOURCE_DIR}/mysql-test/schema/events_raw.sql)
+# Single-source the ClickHouse schema. schema/events_raw.sql is the one
+# canonical DDL: the artifact operators apply to ClickHouse (README points at
+# it) AND the shape the native sink's block builder targets. The live MTR tests
+# need the table under distinct names so they never collide; rather than inline
+# the DDL in each test (which drifts), generate a per-test .sql here by
+# substituting the table name. Tests curl the generated file (path via
+# $VSQL_STAT_CH_SCHEMA_DIR, exported by test.sh). Regenerated on every
+# configure, so a schema edit reaches the tests with no manual sync.
+set(CH_SCHEMA_SRC ${CMAKE_CURRENT_SOURCE_DIR}/schema/events_raw.sql)
 file(READ ${CH_SCHEMA_SRC} CH_SCHEMA_TEXT)
 foreach(tbl events_raw_native events_raw_http)
   string(REPLACE "default.events_raw" "default.${tbl}" _ddl "${CH_SCHEMA_TEXT}")
