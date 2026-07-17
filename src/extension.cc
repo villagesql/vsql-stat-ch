@@ -52,16 +52,20 @@ char *g_user = nullptr;
 char *g_password = nullptr;
 // native transport
 char *g_host = nullptr;
-int64_t g_port = 9000;
-int64_t g_compression = 1; // 0=none, 1=lz4, 2=zstd
+// Integer sys/status vars are declared as `long long` to match the status-var
+// and sys-var SDK contract (make_int takes `long long *`). int64_t is `long` on
+// LP64 Linux and `long long` on macOS, so using int64_t here compiled on macOS
+// but failed to bind on Linux.
+long long g_port = 9000;
+long long g_compression = 1; // 0=none, 1=lz4, 2=zstd
 // http transport
 char *g_url = nullptr;
-int64_t g_http_timeout_secs = 10;
+long long g_http_timeout_secs = 10;
 // shared behavior
-int64_t g_queue_capacity = 100000;
-int64_t g_batch_max = 10000;
-int64_t g_flush_interval_ms = 1000;
-int64_t g_statement_max_bytes = 4096;
+long long g_queue_capacity = 100000;
+long long g_batch_max = 10000;
+long long g_flush_interval_ms = 1000;
+long long g_statement_max_bytes = 4096;
 
 auto SYS_VARS = sv::make_capability({
     sv::make_str("transport",
@@ -105,12 +109,14 @@ auto SYS_VARS = sv::make_capability({
                  &g_statement_max_bytes, 4096, 0, 1048576),
 });
 
-int64_t g_events_captured = 0;
-int64_t g_events_archived = 0;
-int64_t g_events_dropped = 0;
-int64_t g_queue_depth = 0;
-int64_t g_flush_errors = 0;
-int64_t g_last_flush_utime = 0;
+// Status-var counters: long long to match make_int's `long long *` (see the
+// note on the sys-var globals above).
+long long g_events_captured = 0;
+long long g_events_archived = 0;
+long long g_events_dropped = 0;
+long long g_queue_depth = 0;
+long long g_flush_errors = 0;
+long long g_last_flush_utime = 0;
 
 auto STATUS_VARS = stv::make_capability({
     stv::make_int("events_captured", &g_events_captured),

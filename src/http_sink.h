@@ -37,7 +37,7 @@ public:
     char **table;    // "events_raw"
     char **user;     // empty = no auth
     char **password;
-    int64_t *http_timeout_secs;
+    long long *http_timeout_secs;
   };
 
   explicit HttpSink(const Config &config) : config_(config) {}

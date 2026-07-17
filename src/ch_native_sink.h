@@ -40,8 +40,8 @@ public:
     char **table;    // "events_raw"
     char **user;     // "default"
     char **password;
-    int64_t *port;        // 9000
-    int64_t *compression; // 0=none, 1=lz4, 2=zstd
+    long long *port;        // 9000
+    long long *compression; // 0=none, 1=lz4, 2=zstd
   };
 
   explicit ChNativeSink(const Config &config) : config_(config) {}
