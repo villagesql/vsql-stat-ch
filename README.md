@@ -32,16 +32,27 @@ export VillageSQL_BUILD_DIR=$HOME/build/villagesql
 ./test.sh                # build + run the MTR suite
 ```
 
-If cloned without `--recurse-submodules`:
+`./build.sh` keeps the submodules (`core`, `third_party/clickhouse-c`) synced to
+the commit this checkout pins: if you cloned without `--recurse-submodules`, or a
+later `git pull` advanced the pin, the script runs `git submodule update --init
+--recursive` for you before configuring. (It leaves a submodule alone if it has
+uncommitted local changes, so in-progress core work is never clobbered.)
+
+**If you do NOT use `build.sh`** — calling `cmake` directly, building from an
+IDE, or in CI — you must manage the submodules yourself; a plain `git clone` /
+`git pull` does not populate or advance them:
 
 ```bash
-git submodule update --init   # core (shared pipeline) + third_party/clickhouse-c
+git submodule update --init --recursive   # core (shared pipeline) + clickhouse-c
+# optional: make `git pull` do this automatically from now on
+git config submodule.recurse true
 ```
 
 Prerequisites: a VillageSQL build dir (`VillageSQL_BUILD_DIR`), CMake 3.16+, a
-C++17 compiler, and lz4 + zstd development libraries (`liblz4-dev libzstd-dev`
-on Debian/Ubuntu, `brew install lz4 zstd` on macOS). The build produces
-`build/vsql_stat_ch.veb`.
+C++17 compiler, and the lz4, zstd, and libcurl development libraries
+(`liblz4-dev libzstd-dev libcurl4-openssl-dev` on Debian/Ubuntu;
+`brew install lz4 zstd` on macOS, where libcurl ships with the system). The
+build produces `build/vsql_stat_ch.veb`.
 
 ## Usage
 
