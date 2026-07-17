@@ -32,6 +32,22 @@ export VillageSQL_BUILD_DIR=$HOME/build/villagesql
 ./test.sh                # build + run the MTR suite
 ```
 
+`VillageSQL_BUILD_DIR` can point at **either** a from-source VillageSQL build
+tree **or** a prebuilt install — both carry the SDK, `mysql-test/`, and the
+server at the same relative paths. To develop/test against a stable server
+*without* building it from source, use the official installer's prebuilt mode:
+
+```bash
+# installs server + SDK + test harness to ~/.villagesql/prebuilt (no sudo)
+INSTALL_METHOD=prebuilt bash -c "$(curl -fsSL https://install.villagesql.com)"
+./test.sh                # build + run the MTR suite against the prebuilt server
+```
+
+After a vanilla prebuilt install no env var is needed: `build.sh`/`test.sh`
+default `VillageSQL_BUILD_DIR` to `$HOME/.villagesql/prebuilt` when it exists.
+Set it explicitly (`export VillageSQL_BUILD_DIR=...`) to use a build tree or a
+non-default location.
+
 `./build.sh` keeps the submodules (`core`, `third_party/clickhouse-c`) synced to
 the commit this checkout pins: if you cloned without `--recurse-submodules`, or a
 later `git pull` advanced the pin, the script runs `git submodule update --init

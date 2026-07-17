@@ -56,9 +56,21 @@ ensure_submodules() {
 }
 ensure_submodules
 
+# Default to the prebuilt install location when unset: install.villagesql.com
+# (INSTALL_METHOD=prebuilt) always lands the server+SDK at ~/.villagesql/prebuilt,
+# so a vanilla install needs no configuration. Only default if it actually
+# exists; otherwise fall through to the error below rather than proceed blindly.
+if [[ -z "${VillageSQL_BUILD_DIR:-}" && -d "${HOME}/.villagesql/prebuilt" ]]; then
+  VillageSQL_BUILD_DIR="${HOME}/.villagesql/prebuilt"
+  echo "[build] VillageSQL_BUILD_DIR unset -- defaulting to ${VillageSQL_BUILD_DIR}"
+fi
+
 if [[ -z "${VillageSQL_BUILD_DIR:-}" ]]; then
-  echo "ERROR: VillageSQL_BUILD_DIR is not set." >&2
-  echo "  export VillageSQL_BUILD_DIR=/path/to/villagesql/build" >&2
+  echo "ERROR: VillageSQL_BUILD_DIR is not set and no prebuilt install was found" >&2
+  echo "  at \$HOME/.villagesql/prebuilt. Set one of:" >&2
+  echo "  A from-source build tree:  export VillageSQL_BUILD_DIR=/path/to/villagesql/build" >&2
+  echo "  OR a prebuilt install:     export VillageSQL_BUILD_DIR=\$HOME/.villagesql/prebuilt" >&2
+  echo "                             (from install.villagesql.com, INSTALL_METHOD=prebuilt)" >&2
   exit 1
 fi
 
@@ -66,10 +78,12 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 mkdir -p "${BUILD_DIR}"
 
 # Select the newest SDK by modification time (not alphabetical) to avoid
-# version mismatch when multiple SDK versions exist in the build directory.
+# version mismatch when multiple SDK versions exist in the directory. Works for
+# both a build tree and a prebuilt install -- both hold villagesql-extension-sdk-*/.
 SDK_DIR="$(ls -dt "${VillageSQL_BUILD_DIR}"/villagesql-extension-sdk-*/ 2>/dev/null | head -1)"
 if [[ -z "${SDK_DIR}" ]]; then
   echo "ERROR: No villagesql-extension-sdk-* found in ${VillageSQL_BUILD_DIR}" >&2
+  echo "  Expected a VillageSQL build tree or a prebuilt install there." >&2
   exit 1
 fi
 # Strip any trailing slash so cache comparisons are stable.
@@ -95,10 +109,24 @@ if [[ -f "${CACHE_FILE}" ]]; then
   fi
 fi
 
+# VillageSQL_BUILD_DIR may point at EITHER a from-source build tree OR a prebuilt
+# install (e.g. ~/.villagesql/prebuilt from `install.villagesql.com`
+# INSTALL_METHOD=prebuilt). Both carry villagesql-extension-sdk-*/, mysql-test/,
+# and bin/mysqld at the same relative paths, so the SDK glob and the test run
+# work for both. The only difference is veb_output_directory/ (where a build tree
+# stages the server's own bundled extensions) -- a prebuilt install has none.
+# Only pass VillageSQL_VEB_INSTALL_DIR when it exists; otherwise the VEB just
+# lands in build/ (which is all test.sh needs -- it stages the VEB into a temp
+# veb-dir itself).
+VEB_INSTALL_ARGS=()
+if [[ -d "${VillageSQL_BUILD_DIR}/veb_output_directory" ]]; then
+  VEB_INSTALL_ARGS=(-DVillageSQL_VEB_INSTALL_DIR="${VillageSQL_BUILD_DIR}/veb_output_directory")
+fi
+
 # FORCE the cache value so a re-configure always adopts the current selection.
 cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
   -DVillageSQL_SDK_DIR:PATH="${SDK_DIR}" \
-  -DVillageSQL_VEB_INSTALL_DIR="${VillageSQL_BUILD_DIR}/veb_output_directory"
+  ${VEB_INSTALL_ARGS[@]+"${VEB_INSTALL_ARGS[@]}"}
 
 cmake --build "${BUILD_DIR}" -- -j"$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)"
 

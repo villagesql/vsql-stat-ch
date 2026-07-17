@@ -14,10 +14,31 @@ Unlike function extensions (VDFs), this uses VillageSQL **preview capabilities**
 
 **IMPORTANT**: Always build in the `build/` directory, never in the source root.
 
+**First-time setup**: clone with submodules and install deps before building —
+see [Cloning](#cloning) and [Dependencies](#dependencies) below. (`build.sh`
+auto-syncs submodules to the pin; CMake names any missing dep.)
+
+`VillageSQL_BUILD_DIR` tells `build.sh`/`test.sh` where to find the VillageSQL
+SDK + server. It may point at **either**:
+
+- a **from-source build tree** (e.g. `$HOME/build/villagesql`), or
+- a **prebuilt install** at `$HOME/.villagesql/prebuilt`, produced by the
+  official installer without building the server from source:
+  `INSTALL_METHOD=prebuilt bash -c "$(curl -fsSL https://install.villagesql.com)"`
+
+Both carry `villagesql-extension-sdk-*/`, `mysql-test/`, and `bin/mysqld` at the
+same relative paths, so build + MTR work against either. The prebuilt install is
+the quickest way to develop/test an extension without a full server build.
+
+**When unset, `build.sh`/`test.sh` default to `$HOME/.villagesql/prebuilt` if it
+exists** — so after a vanilla `install.villagesql.com` (prebuilt) install, no env
+var is needed at all; just run `./test.sh`. Set the var explicitly to use a
+build tree or a non-default location.
+
 ### Build
 
 ```bash
-export VillageSQL_BUILD_DIR=/path/to/villagesql/build
+export VillageSQL_BUILD_DIR=/path/to/villagesql/build   # or $HOME/.villagesql/prebuilt
 ./build.sh
 ```
 
@@ -27,7 +48,7 @@ export VillageSQL_BUILD_DIR=/path/to/villagesql/build
 ### Test
 
 ```bash
-export VillageSQL_BUILD_DIR=/path/to/villagesql/build
+export VillageSQL_BUILD_DIR=/path/to/villagesql/build   # or $HOME/.villagesql/prebuilt
 ./test.sh            # build + run the MTR suite
 RECORD=1 ./test.sh   # build + record the .result files
 ```
@@ -59,6 +80,8 @@ git submodule update --init
   `CHC_IMPLEMENTATION`).
 - lz4 + zstd (`liblz4-dev libzstd-dev`, or `brew install lz4 zstd`) — the native
   protocol's block-compression codecs.
+- libcurl (`libcurl4-openssl-dev` on Debian/Ubuntu; ships with macOS) — the HTTP
+  transport (JSONEachRow POST). CMake hard-requires it (`find_package(CURL)`).
 
 ## Architecture
 
