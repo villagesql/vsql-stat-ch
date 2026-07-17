@@ -48,7 +48,14 @@ CREATE TABLE default.events_raw
     created_tmp_tables      UInt32            COMMENT 'Internal temp tables created.',
     created_tmp_disk_tables UInt32            COMMENT 'Internal temp tables spilled to disk.',
     no_index_used      Bool                   COMMENT 'Statement ran without any index.',
-    no_good_index_used Bool                   COMMENT 'No good index was available.'
+    no_good_index_used Bool                   COMMENT 'No good index was available.',
+    read_first         UInt64                 COMMENT 'Handler index-first reads (MIN / index start).',
+    read_last          UInt64                 COMMENT 'Handler index-last reads (MAX / index end).',
+    read_key           UInt64                 COMMENT 'Handler reads via an index lookup.',
+    read_next          UInt64                 COMMENT 'Handler forward index walks (range scan).',
+    read_prev          UInt64                 COMMENT 'Handler backward index walks (reverse scan).',
+    read_rnd           UInt64                 COMMENT 'Handler reads by position (post-filesort fetch).',
+    read_rnd_next      UInt64                 COMMENT 'Handler next-row in a full scan (high = table scan).'
 )
 ENGINE = MergeTree
 PARTITION BY toDate(event_time)

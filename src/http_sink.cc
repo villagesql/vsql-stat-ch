@@ -133,6 +133,13 @@ std::string build_body(const std::vector<EventRow> &batch) {
     append_kv_num(body, "created_tmp_disk_tables", r.created_tmp_disk_tables);
     append_kv_num(body, "no_index_used", r.no_index_used ? 1 : 0);
     append_kv_num(body, "no_good_index_used", r.no_good_index_used ? 1 : 0);
+    append_kv_num(body, "read_first", r.read_first);
+    append_kv_num(body, "read_last", r.read_last);
+    append_kv_num(body, "read_key", r.read_key);
+    append_kv_num(body, "read_next", r.read_next);
+    append_kv_num(body, "read_prev", r.read_prev);
+    append_kv_num(body, "read_rnd", r.read_rnd);
+    append_kv_num(body, "read_rnd_next", r.read_rnd_next);
     body += "}\n";
   }
   return body;

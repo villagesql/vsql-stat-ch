@@ -340,7 +340,8 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       "bytes_received, select_full_join, select_full_range_join, select_range, "
       "select_range_check, select_scan, sort_merge_passes, sort_range, "
       "sort_rows, sort_scan, created_tmp_tables, created_tmp_disk_tables, "
-      "no_index_used, no_good_index_used) VALUES";
+      "no_index_used, no_good_index_used, read_first, read_last, read_key, "
+      "read_next, read_prev, read_rnd, read_rnd_next) VALUES";
   if (chc_client_send_query(conn_->client, insert.c_str(), insert.size(),
                             nullptr, 0, &cerr) != CHC_OK) {
     err = std::string("send_query failed: ") + cerr.msg;
@@ -499,6 +500,19 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   const size_t f_ngiu = fixed_col([](const EventRow &r) -> uint8_t {
     return r.no_good_index_used ? 1 : 0;
   });
+  // Handler row-access counters (UInt64 -- row-read counts can be large).
+  const size_t f_rfirst =
+      fixed_col([](const EventRow &r) { return r.read_first; });
+  const size_t f_rlast =
+      fixed_col([](const EventRow &r) { return r.read_last; });
+  const size_t f_rkey = fixed_col([](const EventRow &r) { return r.read_key; });
+  const size_t f_rnext =
+      fixed_col([](const EventRow &r) { return r.read_next; });
+  const size_t f_rprev =
+      fixed_col([](const EventRow &r) { return r.read_prev; });
+  const size_t f_rrnd = fixed_col([](const EventRow &r) { return r.read_rnd; });
+  const size_t f_rrndnext =
+      fixed_col([](const EventRow &r) { return r.read_rnd_next; });
 
   // Parse the column types once for this block. These match the fixed
   // events_raw schema (see README / ch_native_live.test): event_time is
@@ -585,6 +599,13 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   add_fixed("created_tmp_disk_tables", t_u32.t, f_ctdt);
   add_fixed("no_index_used", t_bool.t, f_niu);
   add_fixed("no_good_index_used", t_bool.t, f_ngiu);
+  add_fixed("read_first", t_u64.t, f_rfirst);
+  add_fixed("read_last", t_u64.t, f_rlast);
+  add_fixed("read_key", t_u64.t, f_rkey);
+  add_fixed("read_next", t_u64.t, f_rnext);
+  add_fixed("read_prev", t_u64.t, f_rprev);
+  add_fixed("read_rnd", t_u64.t, f_rrnd);
+  add_fixed("read_rnd_next", t_u64.t, f_rrndnext);
 
   // Silence unused-index warnings from the reused scratch variables.
   (void)di;
