@@ -29,6 +29,7 @@ CREATE TABLE default.events_raw
     warning_count      UInt32                 COMMENT 'Warnings raised by the statement.',
     status             UInt16                 COMMENT 'MySQL error code; 0 on success.',
     digest_text        String                 COMMENT 'Normalized statement digest (literals stripped).',
+    digest_hash        String                 COMMENT 'Statement identity hash (64-char hex; == performance_schema DIGEST).',
     query              String                 COMMENT 'Statement text (rewritten/redacted when applicable).',
     sqlstate           LowCardinality(String) COMMENT '5-char SQLSTATE; empty on success.',
     error_message      String DEFAULT ''      COMMENT 'Error text; empty on success.',

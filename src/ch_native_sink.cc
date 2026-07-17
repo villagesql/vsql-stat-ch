@@ -335,7 +335,8 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       " (event_time, user, client_ip, schema, sql_command, connection_id, "
       "in_transaction, query_time_secs, lock_time_secs, "
       "rows_sent, rows_examined, rows_affected, warning_count, status, "
-      "digest_text, query, sqlstate, error_message, port, bytes_sent, "
+      "digest_text, digest_hash, query, sqlstate, error_message, port, "
+      "bytes_sent, "
       "bytes_received, select_full_join, select_full_range_join, select_range, "
       "select_range_check, select_scan, sort_merge_passes, sort_range, "
       "sort_rows, sort_scan, created_tmp_tables, created_tmp_disk_tables, "
@@ -398,7 +399,7 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       batch, cs, lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n,
       [](const EventRow &r) -> const std::string & { return r.sqlstate; });
 
-  // Plain String columns: query, digest_text, error_message.
+  // Plain String columns: query, digest_text, digest_hash, error_message.
   size_t q_d, q_o;
   build_string_col(
       batch, cs, q_d, q_o,
@@ -407,6 +408,10 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   build_string_col(
       batch, cs, dg_d, dg_o,
       [](const EventRow &r) -> const std::string & { return r.digest_text; });
+  size_t dh_d, dh_o;
+  build_string_col(
+      batch, cs, dh_d, dh_o,
+      [](const EventRow &r) -> const std::string & { return r.digest_hash; });
   size_t em_d, em_o;
   build_string_col(
       batch, cs, em_d, em_o,
@@ -560,6 +565,7 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   add_fixed("warning_count", t_u32.t, f_warn);
   add_fixed("status", t_u16.t, f_status);
   add_str("digest_text", dg_d, dg_o);
+  add_str("digest_hash", dh_d, dh_o);
   add_str("query", q_d, q_o);
   add_lc("sqlstate", lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n);
   add_str("error_message", em_d, em_o);

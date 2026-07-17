@@ -117,6 +117,7 @@ std::string build_body(const std::vector<EventRow> &batch) {
     append_kv_str(body, "sqlstate", r.sqlstate, false);
     append_kv_str(body, "error_message", r.error_message, false);
     append_kv_str(body, "digest_text", r.digest_text, false);
+    append_kv_str(body, "digest_hash", r.digest_hash, false);
     append_kv_num(body, "bytes_sent", r.bytes_sent);
     append_kv_num(body, "bytes_received", r.bytes_received);
     append_kv_num(body, "select_full_join", r.select_full_join);
