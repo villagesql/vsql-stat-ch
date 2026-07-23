@@ -30,6 +30,35 @@ root	false	0	SELECT \'vsql_stat_native_marker\' AS marker
 # normalized, and its precise text is a server/P_S detail we do not pin).
 digest_present
 1
+#
+# Per-statement counters are NOT cumulative. The handler/optimizer counters
+# (read_*, select_*, sort_*, ...) are per-statement deltas, computed from a
+# status_var snapshot the server takes at statement start. That snapshot is
+# normally gated behind log_slow_extra; the statement_event hook forces it
+# whenever a hook is registered, so the deltas are correct even with
+# log_slow_extra OFF (which it is here). Without the fix, every counter
+# silently reports the cumulative session total instead.
+#
+# Test: run the SAME full-scan query TWICE. A full scan of an N-row table
+# does ~N read_rnd_next per execution. Per-statement -> both rows report the
+# same value. Cumulative -> the 2nd row includes the 1st (~2N), so the two
+# rows would differ. We assert the two values are EQUAL.
+CREATE TABLE test.vsql_cnt (id INT) ENGINE=InnoDB;
+INSERT INTO test.vsql_cnt VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+# Two identical full scans, distinct marker so we can find exactly these
+# two. SELECT * (not COUNT) so the rows are actually read via the handler,
+# reliably driving read_rnd_next > 0 on the InnoDB full scan.
+SELECT * FROM test.vsql_cnt WHERE id >= 0 /* vsql_stat_cumul_marker */;
+SELECT * FROM test.vsql_cnt WHERE id >= 0 /* vsql_stat_cumul_marker */;
+# Wait until both marker rows have landed in ClickHouse.
+# Non-cumulative check: the two executions report the SAME, NON-ZERO
+# read_rnd_next. Result 1 means (min>0 AND max==min): both rows saw the
+# per-statement scan cost, neither the running total. A cumulative bug
+# would make row2 > row1 (max!=min -> 0); a vacuous zero-counter would
+# fail the min>0 guard (-> 0) rather than pass silently.
+read_rnd_next_per_statement
+1
+DROP TABLE test.vsql_cnt;
 # Disable and uninstall cleanly.
 SET GLOBAL vsql_stat_ch.enabled = OFF;
 UNINSTALL EXTENSION vsql_stat_ch;

@@ -126,6 +126,54 @@ while ($chn_marker_count == 0)
 --echo # normalized, and its precise text is a server/P_S detail we do not pin).
 --exec curl -s "$ch_url/?query=SELECT%20digest_text%20%21%3D%20%27%27%20AS%20digest_present%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
 
+--echo #
+--echo # Per-statement counters are NOT cumulative. The handler/optimizer counters
+--echo # (read_*, select_*, sort_*, ...) are per-statement deltas, computed from a
+--echo # status_var snapshot the server takes at statement start. That snapshot is
+--echo # normally gated behind log_slow_extra; the statement_event hook forces it
+--echo # whenever a hook is registered, so the deltas are correct even with
+--echo # log_slow_extra OFF (which it is here). Without the fix, every counter
+--echo # silently reports the cumulative session total instead.
+--echo #
+--echo # Test: run the SAME full-scan query TWICE. A full scan of an N-row table
+--echo # does ~N read_rnd_next per execution. Per-statement -> both rows report the
+--echo # same value. Cumulative -> the 2nd row includes the 1st (~2N), so the two
+--echo # rows would differ. We assert the two values are EQUAL.
+CREATE TABLE test.vsql_cnt (id INT) ENGINE=InnoDB;
+INSERT INTO test.vsql_cnt VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+--echo # Two identical full scans, distinct marker so we can find exactly these
+--echo # two. SELECT * (not COUNT) so the rows are actually read via the handler,
+--echo # reliably driving read_rnd_next > 0 on the InnoDB full scan.
+--disable_result_log
+SELECT * FROM test.vsql_cnt WHERE id >= 0 /* vsql_stat_cumul_marker */;
+SELECT * FROM test.vsql_cnt WHERE id >= 0 /* vsql_stat_cumul_marker */;
+--enable_result_log
+
+--echo # Wait until both marker rows have landed in ClickHouse.
+--let $cumul_count_q = SELECT%20count()%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_cumul_marker%25%27
+--let $cumul_count = 0
+--let $tries = 0
+while ($cumul_count < 2)
+{
+  --exec sh -c "sleep 0.3"
+  --exec curl -s "$ch_url/?query=$cumul_count_q" > $chn_count_file
+  --let $cumul_count = `SELECT TRIM(load_file('$chn_count_file')) + 0`
+  --inc $tries
+  if ($tries == 30)
+  {
+    --die ClickHouse did not receive both cumulative-check rows within timeout
+  }
+}
+
+--echo # Non-cumulative check: the two executions report the SAME, NON-ZERO
+--echo # read_rnd_next. Result 1 means (min>0 AND max==min): both rows saw the
+--echo # per-statement scan cost, neither the running total. A cumulative bug
+--echo # would make row2 > row1 (max!=min -> 0); a vacuous zero-counter would
+--echo # fail the min>0 guard (-> 0) rather than pass silently.
+--exec curl -s "$ch_url/?query=SELECT%20%28min%28read_rnd_next%29%20%3E%200%20AND%20max%28read_rnd_next%29%20%3D%20min%28read_rnd_next%29%29%20AS%20read_rnd_next_per_statement%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_cumul_marker%25%27%20FORMAT%20TabSeparatedWithNames"
+
+DROP TABLE test.vsql_cnt;
+
 --echo # Disable and uninstall cleanly.
 SET GLOBAL vsql_stat_ch.enabled = OFF;
 UNINSTALL EXTENSION vsql_stat_ch;
