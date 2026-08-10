@@ -10,8 +10,9 @@ under `core/`).
   ClickHouse's own client (`clickhouse-c`). Higher fidelity: the row batch is
   transposed to columns, low-cardinality strings (`user`, `client_ip`, `schema`,
   `sql_command`) are dictionary-encoded, and each block is LZ4/ZSTD compressed.
-  Because dictionaries and compression are per-block, native defaults to a larger
-  `batch_max` (10000) — bigger blocks pack better.
+  Because dictionaries and compression are per-block, raising `batch_max` pays
+  off more here than over HTTP — bigger blocks pack better. (The default is
+  10000 for both transports; there is one shared sysvar, not one per transport.)
 - **`transport = http`** (port 8123) — a `INSERT … FORMAT JSONEachRow` POST via
   libcurl. Simpler and dependency-light on the wire; use it for low/moderate
   volume, or where the native port isn't reachable.
@@ -108,7 +109,8 @@ Sysvars:
 | `clickhouse_host`, `clickhouse_port`, `compression` | native | native socket + block codec (0=none,1=lz4,2=zstd) |
 | `clickhouse_url`, `http_timeout_secs` | http | HTTP endpoint + timeout |
 
-Shared behavior sysvars (`enabled`, `queue_capacity`, `batch_max`,
+`enabled` is the SDK `ThreadWorkerCapability`'s own switch, wired per sink. The
+shared behavior sysvars (`queue_capacity`, `batch_max`,
 `flush_interval_ms`, `statement_max_bytes`) and status vars (`events_captured`,
 `events_archived`, `events_dropped`, `queue_depth`, `flush_errors`,
 `last_flush_utime`) come from the shared core.
