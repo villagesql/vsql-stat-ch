@@ -55,7 +55,10 @@ CREATE TABLE default.events_raw
     read_next          UInt64                 COMMENT 'Handler forward index walks (range scan).',
     read_prev          UInt64                 COMMENT 'Handler backward index walks (reverse scan).',
     read_rnd           UInt64                 COMMENT 'Handler reads by position (post-filesort fetch).',
-    read_rnd_next      UInt64                 COMMENT 'Handler next-row in a full scan (high = table scan).'
+    read_rnd_next      UInt64                 COMMENT 'Handler next-row in a full scan (high = table scan).',
+    client_pid         LowCardinality(String) COMMENT 'Client OS process id (session_connect_attrs _pid); empty if unset.',
+    client_name        LowCardinality(String) COMMENT 'Client connector/driver library (_client_name); empty if unset.',
+    program_name       LowCardinality(String) COMMENT 'Client application name (program_name); empty if unset.'
 )
 ENGINE = MergeTree
 PARTITION BY toDate(event_time)

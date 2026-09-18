@@ -341,7 +341,8 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
       "select_range_check, select_scan, sort_merge_passes, sort_range, "
       "sort_rows, sort_scan, created_tmp_tables, created_tmp_disk_tables, "
       "no_index_used, no_good_index_used, read_first, read_last, read_key, "
-      "read_next, read_prev, read_rnd, read_rnd_next) VALUES";
+      "read_next, read_prev, read_rnd, read_rnd_next, "
+      "client_pid, client_name, program_name) VALUES";
   if (chc_client_send_query(conn_->client, insert.c_str(), insert.size(),
                             nullptr, 0, &cerr) != CHC_OK) {
     err = std::string("send_query failed: ") + cerr.msg;
@@ -399,6 +400,20 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   build_lc_col(
       batch, cs, lc_ss_k, lc_ss_dd, lc_ss_do, lc_ss_n,
       [](const EventRow &r) -> const std::string & { return r.sqlstate; });
+  // Client connection attributes: LowCardinality (few distinct pids/clients per
+  // workload), like user/client_ip above.
+  size_t lc_cpid_k, lc_cpid_dd, lc_cpid_do, lc_cpid_n;
+  build_lc_col(
+      batch, cs, lc_cpid_k, lc_cpid_dd, lc_cpid_do, lc_cpid_n,
+      [](const EventRow &r) -> const std::string & { return r.client_pid; });
+  size_t lc_cname_k, lc_cname_dd, lc_cname_do, lc_cname_n;
+  build_lc_col(
+      batch, cs, lc_cname_k, lc_cname_dd, lc_cname_do, lc_cname_n,
+      [](const EventRow &r) -> const std::string & { return r.client_name; });
+  size_t lc_prog_k, lc_prog_dd, lc_prog_do, lc_prog_n;
+  build_lc_col(
+      batch, cs, lc_prog_k, lc_prog_dd, lc_prog_do, lc_prog_n,
+      [](const EventRow &r) -> const std::string & { return r.program_name; });
 
   // Plain String columns: query, digest_text, digest_hash, error_message.
   size_t q_d, q_o;
@@ -606,6 +621,9 @@ bool ChNativeSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   add_fixed("read_prev", t_u64.t, f_rprev);
   add_fixed("read_rnd", t_u64.t, f_rrnd);
   add_fixed("read_rnd_next", t_u64.t, f_rrndnext);
+  add_lc("client_pid", lc_cpid_k, lc_cpid_dd, lc_cpid_do, lc_cpid_n);
+  add_lc("client_name", lc_cname_k, lc_cname_dd, lc_cname_do, lc_cname_n);
+  add_lc("program_name", lc_prog_k, lc_prog_dd, lc_prog_do, lc_prog_n);
 
   // Silence unused-index warnings from the reused scratch variables.
   (void)di;
