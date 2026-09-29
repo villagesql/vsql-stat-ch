@@ -29,6 +29,9 @@
 #include <villagesql/preview/thread_worker.h>
 #include <villagesql/vsql.h>
 
+#include <cstdio>
+#include <exception>
+
 #include "core/capture_pipeline.h"
 #include "transport_sink.h"
 
@@ -151,15 +154,40 @@ const bool g_inited = [] {
 }();
 
 // Capability handlers (thin wrappers over the core pipeline).
+//
+// Both wrappers guard against exceptions: on_statement()/on_flush() build
+// std::string fields, push into a std::vector-backed queue, and (in on_flush)
+// build SQL/JSON text and column buffers for the outbound sink -- all of
+// which can throw std::bad_alloc/std::length_error. The VEF SDK does not
+// catch exceptions at the statement_event/thread_worker entry-point
+// boundary, so an escaping exception here -- on every statement's
+// POSTEXECUTE event, or on every flush-worker wakeup -- would crash the
+// whole server rather than just drop the one event/flush.
 void on_query(const se::StatementEventArgs &args,
               se::StatementEventResult & /*result*/) {
-  ::vsql_stat::on_statement(args);
+  try {
+    ::vsql_stat::on_statement(args);
+  } catch (const std::exception &e) {
+    fprintf(stderr, "[vsql_stat_ch] on_statement: %s\n", e.what());
+  } catch (...) {
+    fprintf(stderr, "[vsql_stat_ch] on_statement: unknown error\n");
+  }
 }
 
 vef_next_wakeup_t flush_worker(vef_wakeup_reason_t reason,
                                struct vef_thread_handle_t * /*thread*/,
                                void * /*user_data*/) {
-  return ::vsql_stat::on_flush(reason);
+  try {
+    return ::vsql_stat::on_flush(reason);
+  } catch (const std::exception &e) {
+    fprintf(stderr, "[vsql_stat_ch] on_flush: %s\n", e.what());
+    // Keep the periodic timer alive with a conservative fixed retry instead
+    // of either crashing the server or silently going quiet forever.
+    return {1000, 0};
+  } catch (...) {
+    fprintf(stderr, "[vsql_stat_ch] on_flush: unknown error\n");
+    return {1000, 0};
+  }
 }
 
 tw::ThreadWorkerCapability<&flush_worker> THREAD_WORKER{"flush", "enabled"};
