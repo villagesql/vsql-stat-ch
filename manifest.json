@@ -1,6 +1,6 @@
 {
   "name": "vsql_stat_ch",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Per-query telemetry streamed to ClickHouse over the native protocol (port 9000)",
   "author": "VillageSQL Contributors",
   "license": "GPL-2.0"

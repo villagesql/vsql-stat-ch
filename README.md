@@ -9,13 +9,15 @@ under `core/`).
 - **`transport = native`** (default, port 9000) — a columnar Data block via
   ClickHouse's own client (`clickhouse-c`). Higher fidelity: the row batch is
   transposed to columns, low-cardinality strings (`user`, `client_ip`, `schema`,
-  `sql_command`) are dictionary-encoded, and each block is LZ4/ZSTD compressed.
+  `sql_command`, `sqlstate`, and the client connect-attrs) are
+  dictionary-encoded, and each block is LZ4/ZSTD compressed.
   Because dictionaries and compression are per-block, raising `batch_max` pays
   off more here than over HTTP — bigger blocks pack better. (The default is
   10000 for both transports; there is one shared sysvar, not one per transport.)
-- **`transport = http`** (port 8123) — a `INSERT … FORMAT JSONEachRow` POST via
-  libcurl. Simpler and dependency-light on the wire; use it for low/moderate
-  volume, or where the native port isn't reachable.
+- **`transport = http`** (port 8123) — an `INSERT … FORMAT Native` POST via
+  libcurl: the same binary columnar block as the native transport, sent
+  uncompressed over ClickHouse's HTTP interface. Use it where the native port
+  isn't reachable.
 
 `transport` is live-switchable: `SET GLOBAL vsql_stat_ch.transport = 'http'`
 takes effect on the next flush.
@@ -23,6 +25,17 @@ takes effect on the next flush.
 ## Status
 
 Preview. Requires a server started with `--vsql_allow_preview_extensions=ON`.
+
+## Requirements
+
+- **ClickHouse 23.3 or newer.** The vendored `clickhouse-c` client refuses to
+  talk to anything older (its minimum native-protocol revision is 23.3's). The
+  extension is tested against ClickHouse 25.8.
+- **VillageSQL extension SDK 0.0.7 or newer** (`villagesql-extension-sdk-0.0.7-dev`
+  or later under `VillageSQL_BUILD_DIR`). The client connect-attrs columns
+  (`client_pid`, `client_name`, `program_name`) need its statement-event fields;
+  against an older SDK (e.g. a 0.0.6 prebuilt) the build fails with
+  `no member named 'client_pid'`.
 
 ## Build
 
@@ -34,9 +47,10 @@ export VillageSQL_BUILD_DIR=$HOME/build/villagesql
 ```
 
 `VillageSQL_BUILD_DIR` can point at **either** a from-source VillageSQL build
-tree **or** a prebuilt install — both carry the SDK, `mysql-test/`, and the
-server at the same relative paths. To develop/test against a stable server
-*without* building it from source, use the official installer's prebuilt mode:
+tree **or** a prebuilt install (SDK 0.0.7+; see [Requirements](#requirements)) —
+both carry the SDK, `mysql-test/`, and the server at the same relative paths.
+To develop/test against a stable server *without* building it from source, use
+the official installer's prebuilt mode:
 
 ```bash
 # installs server + SDK + test harness to ~/.villagesql/prebuilt (no sudo)
@@ -109,6 +123,13 @@ Sysvars:
 | `clickhouse_host`, `clickhouse_port`, `compression` | native | native socket + block codec (0=none,1=lz4,2=zstd) |
 | `clickhouse_url`, `http_timeout_secs` | http | HTTP endpoint + timeout |
 
+**Native `compression` must match the server.** `clickhouse-c` decodes only the
+codec you pick, but the ClickHouse server compresses its replies with its own
+default method. If the two differ, every flush fails (`flush_errors` climbs) with
+`recv (header) failed: <LZ4|ZSTD> frame received but no codec configured`. We
+have seen 25.8 reply with LZ4 (default `compression = 1` works) and 26.9 reply
+with ZSTD (use `compression = 2`). `compression = 0` works against any version.
+
 `enabled` is the SDK `ThreadWorkerCapability`'s own switch, wired per sink. The
 shared behavior sysvars (`queue_capacity`, `batch_max`,
 `flush_interval_ms`, `statement_max_bytes`) and status vars (`events_captured`,
@@ -120,7 +141,7 @@ shared behavior sysvars (`queue_capacity`, `batch_max`,
 The sink only *inserts*; you create the target table. The canonical schema is
 [`schema/events_raw.sql`](schema/events_raw.sql) — the
 single source of truth (the live tests generate their tables from it, and it is
-the shape the native sink's block builder writes). Apply it as-is, or copy it
+the shape the block builder shared by both transports writes). Apply it as-is, or copy it
 and tune the physical properties:
 
 ```bash
@@ -135,7 +156,7 @@ Notes:
 - `event_time` is the MySQL statement start time; the extension sends
   microseconds since epoch, which `DateTime64(6)` stores directly.
 - `LowCardinality(String)` columns must be declared as such so the dictionary
-  encoding round-trips; the native sink sends them dictionary-encoded.
+  encoding round-trips; both transports send them dictionary-encoded.
 
 TLS on the native protocol (port 9440) is not wired yet.
 
@@ -147,11 +168,13 @@ skip-gated live per transport). The hermetic tests (`ch_native`,
 the capture→queue→worker path fires. The `*_live` tests are skip-gated: they run
 only when a ClickHouse is reachable (`test.sh` auto-detects one on
 `http://127.0.0.1:8123`), inserting for real and reading the row back. A local
-instance:
+instance (pinned to 25.8: the `ch_native_live` test uses `compression = 1`,
+which fails against servers that reply with ZSTD, such as 26.9; see the
+`compression` note under [Usage](#usage)):
 
 ```bash
 docker run -d --name vsql-ch -p 8123:8123 -p 9000:9000 \
-  -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server
+  -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server:25.8
 ```
 
 ## Updating the shared core

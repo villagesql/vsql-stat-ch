@@ -27,7 +27,7 @@
 namespace vsql_stat_ch {
 
 // Dispatches each flush to one of two ClickHouse transports -- native protocol
-// (port 9000, via clickhouse-c) or HTTP (port 8123, JSONEachRow via libcurl) --
+// (port 9000, via clickhouse-c) or HTTP (port 8123, FORMAT Native via libcurl) --
 // selected live by the `transport` sysvar. Runs only on the core's single flush
 // worker, so reading the sysvar per flush is race-free with respect to sink
 // state. A live `SET GLOBAL vsql_stat_ch.transport = 'http'` takes effect on

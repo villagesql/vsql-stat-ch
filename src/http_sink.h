@@ -23,10 +23,10 @@
 
 namespace vsql_stat_http {
 
-// HTTP sink: POSTs a batch to an HTTP endpoint. This first version reproduces
-// exactly the prototype's behavior -- a ClickHouse JSONEachRow insert over the
-// HTTP interface (POST <url>/?query=INSERT INTO <db>.<table> FORMAT
-// JSONEachRow). Reads its config through pointers to the sink's sysvar-backed
+// HTTP sink: POSTs a batch to ClickHouse's HTTP interface as one binary
+// Native-format block (POST <url>/?query=INSERT INTO <db>.<table> (<columns>)
+// FORMAT Native), built by the same columnar transpose as the native transport
+// (event_block.h). Reads its config through pointers to the sink's sysvar-backed
 // globals, so a live SET GLOBAL is picked up on the next flush. Runs only on
 // the core's single flush worker.
 class HttpSink : public ::vsql_stat::Sink {

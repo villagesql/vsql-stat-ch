@@ -53,6 +53,8 @@ at a reachable ClickHouse):
   8123 ports; the test inserts over native and reads back over HTTP):
   ```bash
   docker run -d --name vsql-ch -p 8123:8123 -p 9000:9000 \
-    -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server
+    -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server:25.8
   ```
+  Pinned to 25.8: `ch_native_live` uses `compression = 1` (LZ4), and newer
+  servers (e.g. 26.9) reply with ZSTD, which fails the test.
 - `suite.opt` supplies `--vsql_allow_preview_extensions=ON`.

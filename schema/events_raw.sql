@@ -5,7 +5,7 @@
 --     and curled into ClickHouse by the live MTR tests (ch_native_live,
 --     http_transport_live) as their table setup;
 --   * linked (not copied) from README.md, which points operators here;
---   * the shape the native sink's block builder (src/ch_native_sink.cc) writes.
+--   * the shape the shared block builder (src/event_block.cc) writes, over both transports.
 --     The column NAMES, TYPES, and ORDER below are a contract with that builder.
 --
 -- The sink only INSERTs; operators create this table. Physical properties

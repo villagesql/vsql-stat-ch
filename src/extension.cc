@@ -19,7 +19,7 @@
 // This extension wires the shared backend-agnostic capture pipeline (core/) to
 // a ClickHouse sink. It ships both transports behind a TransportSink that
 // dispatches per flush on `transport`: native (columnar block via the vendored
-// clickhouse-c client) or http (JSONEachRow POST via libcurl). The
+// clickhouse-c client) or http (FORMAT Native POST via libcurl). The
 // capture/queue/flush logic lives in core/; this file owns only the SDK
 // capability objects, the sysvars, and the entry-point composition.
 
@@ -44,7 +44,7 @@ namespace tw = vsql::preview_thread_worker;
 namespace {
 
 // Sysvars. `transport` selects the wire: "native" (port 9000, columnar via
-// clickhouse-c) or "http" (port 8123, JSONEachRow via libcurl). Native uses
+// clickhouse-c) or "http" (port 8123, FORMAT Native via libcurl). Native uses
 // host/port/compression; http uses url/http_timeout_secs; both share
 // database/table/user/password. The `enabled` switch is owned by the
 // thread_worker capability below.
@@ -157,7 +157,7 @@ const bool g_inited = [] {
 //
 // Both wrappers guard against exceptions: on_statement()/on_flush() build
 // std::string fields, push into a std::vector-backed queue, and (in on_flush)
-// build SQL/JSON text and column buffers for the outbound sink -- all of
+// build SQL text and column buffers for the outbound sink -- all of
 // which can throw std::bad_alloc/std::length_error. The VEF SDK does not
 // catch exceptions at the statement_event/thread_worker entry-point
 // boundary, so an escaping exception here -- on every statement's
