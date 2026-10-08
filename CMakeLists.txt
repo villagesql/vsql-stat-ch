@@ -53,7 +53,7 @@ if(NOT LZ4_LIB OR NOT ZSTD_LIB)
     "  macOS:         brew install lz4 zstd\n")
 endif()
 
-# libcurl for the HTTP transport (JSONEachRow POST).
+# libcurl for the HTTP transport (FORMAT Native POST).
 find_package(CURL)
 if(NOT CURL_FOUND)
   message(FATAL_ERROR
@@ -75,6 +75,7 @@ add_library(vsql_stat_ch SHARED
     core/capture_pipeline.cc
     src/extension.cc
     src/ch_native_sink.cc
+    src/event_block.cc
     src/clickhouse_c_impl.c
     src/http_sink.cc
 )

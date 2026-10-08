@@ -22,6 +22,10 @@ no_flush_errors
 # ordinary strings, proving the dictionary encoding round-tripped.
 user	in_transaction	status	query
 root	false	0	SELECT \'vsql_stat_native_marker\' AS marker
+# Client connect-attrs (session_connect_attrs) reach ClickHouse: the
+# client pid is set (value varies per run), and the driver name is shown.
+client_pid_set	client_name	program_name
+1	libmysql	mysqltest
 # digest_text is populated (the normalized statement, e.g. "SELECT ? AS
 # marker"), NOT empty -- and note it arrives even though the
 # statements_digest consumer was forced OFF above, proving the digest

@@ -19,130 +19,65 @@
 #include <cstdio>
 #include <string>
 
+// Declarations only (the implementation compiles in clickhouse_c_impl.c).
+// CHC_PROVIDE_STDLIB_ALLOC exposes the chc_alloc_stdlib() declaration.
+#define CHC_PROVIDE_STDLIB_ALLOC
+#include "clickhouse.h"
+
+#include "event_block.h"
+
 namespace vsql_stat_http {
 
 namespace {
 
 using ::vsql_stat::EventRow;
+using ::vsql_stat_ch::EventBlock;
 
 size_t discard_cb(char *, size_t size, size_t nmemb, void *) {
   return size * nmemb; // we don't need the response body
 }
 
-// Minimal JSON string escaping for the values we emit (control chars, quotes,
-// backslashes). ClickHouse JSONEachRow expects standard JSON.
-void append_json_string(std::string &out, const std::string &s) {
-  out += '"';
-  for (const char c : s) {
-    switch (c) {
-    case '"':
-      out += "\\\"";
-      break;
-    case '\\':
-      out += "\\\\";
-      break;
-    case '\n':
-      out += "\\n";
-      break;
-    case '\r':
-      out += "\\r";
-      break;
-    case '\t':
-      out += "\\t";
-      break;
-    default:
-      if (static_cast<unsigned char>(c) < 0x20) {
-        char buf[8];
-        snprintf(buf, sizeof(buf), "\\u%04x", c);
-        out += buf;
-      } else {
-        out += c;
-      }
-    }
+// chc_io write callback that appends into a std::string (ud). Called from the
+// C block writer, so it must not let an exception escape.
+int append_to_string(void *ud, const void *buf, size_t len, chc_err *err) {
+  try {
+    static_cast<std::string *>(ud)->append(static_cast<const char *>(buf), len);
+    return CHC_OK;
+  } catch (...) {
+    snprintf(err->msg, sizeof(err->msg), "out of memory building body");
+    return CHC_ERR_OOM;
   }
-  out += '"';
 }
 
-void append_kv_str(std::string &out, const char *key, const std::string &val,
-                   bool first) {
-  if (!first)
-    out += ',';
-  out += '"';
-  out += key;
-  out += "\":";
-  append_json_string(out, val);
-}
+// The batch as one ClickHouse Native-format block: the same columnar layout
+// the native transport sends, minus the TCP-only BlockInfo prefix and
+// per-column custom-serialization byte (FORMAT Native over HTTP carries
+// neither). Sets `columns` to the INSERT column list matching the block.
+bool build_body(const std::vector<EventRow> &batch, std::string &body,
+                std::string &columns, std::string &err) {
+  const chc_alloc al = chc_alloc_stdlib();
+  EventBlock block(&al);
+  // Float64 timings keep the 6-decimal values the former JSONEachRow body
+  // stored ("%.6f").
+  EventBlock::Options opts;
+  opts.round_secs_to_micros = true;
+  if (!block.build(batch, opts, err))
+    return false;
+  columns = block.column_list();
 
-void append_kv_num(std::string &out, const char *key, uint64_t val) {
-  out += ",\"";
-  out += key;
-  out += "\":";
-  out += std::to_string(val);
-}
-
-void append_kv_dbl(std::string &out, const char *key, double val) {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%.6f", val);
-  out += ",\"";
-  out += key;
-  out += "\":";
-  out += buf;
-}
-
-// One JSONEachRow line per event.
-std::string build_body(const std::vector<EventRow> &batch) {
-  std::string body;
-  body.reserve(batch.size() * 256);
-  for (const EventRow &r : batch) {
-    body += '{';
-    append_kv_str(body, "query", r.query, /*first=*/true);
-    append_kv_str(body, "user", r.user, false);
-    append_kv_str(body, "client_ip", r.client_ip, false);
-    append_kv_str(body, "schema", r.schema, false);
-    append_kv_str(body, "sql_command", r.sql_command, false);
-    append_kv_num(body, "connection_id", r.connection_id);
-    append_kv_num(body, "in_transaction", r.in_transaction ? 1 : 0);
-    // event_time is DateTime64(6): microsecond ticks since epoch. Our stored
-    // value is already microseconds; ClickHouse's JSONEachRow parser reads a
-    // bare integer into DateTime64(6) as that tick count.
-    append_kv_num(body, "event_time", r.query_start_utime);
-    append_kv_dbl(body, "query_time_secs", r.query_time_secs);
-    append_kv_dbl(body, "lock_time_secs", r.lock_time_secs);
-    append_kv_num(body, "rows_sent", r.rows_sent);
-    append_kv_num(body, "rows_examined", r.rows_examined);
-    append_kv_num(body, "rows_affected", r.rows_affected);
-    append_kv_num(body, "warning_count", r.warning_count);
-    append_kv_num(body, "status", static_cast<uint64_t>(r.status));
-    append_kv_num(body, "port", r.port);
-    append_kv_str(body, "sqlstate", r.sqlstate, false);
-    append_kv_str(body, "error_message", r.error_message, false);
-    append_kv_str(body, "digest_text", r.digest_text, false);
-    append_kv_str(body, "digest_hash", r.digest_hash, false);
-    append_kv_num(body, "bytes_sent", r.bytes_sent);
-    append_kv_num(body, "bytes_received", r.bytes_received);
-    append_kv_num(body, "select_full_join", r.select_full_join);
-    append_kv_num(body, "select_full_range_join", r.select_full_range_join);
-    append_kv_num(body, "select_range", r.select_range);
-    append_kv_num(body, "select_range_check", r.select_range_check);
-    append_kv_num(body, "select_scan", r.select_scan);
-    append_kv_num(body, "sort_merge_passes", r.sort_merge_passes);
-    append_kv_num(body, "sort_range", r.sort_range);
-    append_kv_num(body, "sort_rows", r.sort_rows);
-    append_kv_num(body, "sort_scan", r.sort_scan);
-    append_kv_num(body, "created_tmp_tables", r.created_tmp_tables);
-    append_kv_num(body, "created_tmp_disk_tables", r.created_tmp_disk_tables);
-    append_kv_num(body, "no_index_used", r.no_index_used ? 1 : 0);
-    append_kv_num(body, "no_good_index_used", r.no_good_index_used ? 1 : 0);
-    append_kv_num(body, "read_first", r.read_first);
-    append_kv_num(body, "read_last", r.read_last);
-    append_kv_num(body, "read_key", r.read_key);
-    append_kv_num(body, "read_next", r.read_next);
-    append_kv_num(body, "read_prev", r.read_prev);
-    append_kv_num(body, "read_rnd", r.read_rnd);
-    append_kv_num(body, "read_rnd_next", r.read_rnd_next);
-    body += "}\n";
+  chc_io io{};
+  io.ud = &body;
+  io.write = append_to_string;
+  chc_block_opts wire{};
+  wire.has_block_info = false;
+  wire.has_custom_serialization = false;
+  chc_err cerr;
+  chc_err_reset(&cerr);
+  if (chc_block_write(&io, block.builder(), &wire, &cerr) != CHC_OK) {
+    err = std::string("encode Native block failed: ") + cerr.msg;
+    return false;
   }
-  return body;
+  return true;
 }
 
 std::string cfg(char **p) { return (p && *p) ? std::string(*p) : ""; }
@@ -173,12 +108,18 @@ bool HttpSink::flush(const std::vector<EventRow> &batch, std::string &err) {
     return false;
   }
 
-  // POST <url>/?query=INSERT INTO <db>.<table> FORMAT JSONEachRow
+  std::string body, columns;
+  if (!build_body(batch, body, columns, err)) {
+    curl_easy_cleanup(curl);
+    return false;
+  }
+
+  // POST <url>/?query=INSERT INTO <db>.<table> (<columns>) FORMAT Native
   char *db_esc = curl_easy_escape(curl, database.c_str(), 0);
   char *tbl_esc = curl_easy_escape(curl, table.c_str(), 0);
   const std::string insert =
       std::string("INSERT INTO ") + (db_esc ? db_esc : "default") + "." +
-      (tbl_esc ? tbl_esc : "events_raw") + " FORMAT JSONEachRow";
+      (tbl_esc ? tbl_esc : "events_raw") + " (" + columns + ") FORMAT Native";
   if (db_esc)
     curl_free(db_esc);
   if (tbl_esc)
@@ -187,8 +128,6 @@ bool HttpSink::flush(const std::vector<EventRow> &batch, std::string &err) {
   const std::string full_url = url + "/?query=" + (query_esc ? query_esc : "");
   if (query_esc)
     curl_free(query_esc);
-
-  const std::string body = build_body(batch);
 
   curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
   curl_easy_setopt(curl, CURLOPT_POST, 1L);

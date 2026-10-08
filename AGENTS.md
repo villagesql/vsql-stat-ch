@@ -6,7 +6,7 @@ This file provides guidance to AI coding assistants (Claude Code, Gemini Code As
 
 ## Project Overview
 
-This is a per-query telemetry extension for VillageSQL (a MySQL-compatible database). It captures one event per finished statement (query text, user, timing, rows, error state, ...) and ships it to ClickHouse over one of two transports, selected by the `transport` sysvar: **native** (port 9000, a columnar Data block via the vendored `clickhouse-c` client) or **http** (port 8123, an `INSERT … FORMAT JSONEachRow` POST via libcurl). Both ship in this one extension behind a `TransportSink` that dispatches per flush; `transport` is live-switchable. Part of the `vsql-stat` family; the shared capture pipeline lives in [`vsql-stat-core`](https://github.com/villagesql/vsql-stat-core), a git submodule at `core/`.
+This is a per-query telemetry extension for VillageSQL (a MySQL-compatible database). It captures one event per finished statement (query text, user, timing, rows, error state, ...) and ships it to ClickHouse over one of two transports, selected by the `transport` sysvar: **native** (port 9000, a columnar Data block via the vendored `clickhouse-c` client) or **http** (port 8123, an `INSERT … FORMAT Native` POST via libcurl). Both ship in this one extension behind a `TransportSink` that dispatches per flush; `transport` is live-switchable. Part of the `vsql-stat` family; the shared capture pipeline lives in [`vsql-stat-core`](https://github.com/villagesql/vsql-stat-core), a git submodule at `core/`.
 
 Unlike function extensions (VDFs), this uses VillageSQL **preview capabilities**: a POSTEXECUTE `statement_event` hook (capture on the connection thread) plus a `thread_worker` (background flush), with `sys_var`/`status_var` for config and observability.
 
@@ -34,6 +34,10 @@ the quickest way to develop/test an extension without a full server build.
 exists** — so after a vanilla `install.villagesql.com` (prebuilt) install, no env
 var is needed at all; just run `./test.sh`. Set the var explicitly to use a
 build tree or a non-default location.
+
+Requirements: SDK **0.0.7+** (the connect-attrs fields `core/` reads; a 0.0.6
+prebuilt fails to compile) and ClickHouse **23.3+** (clickhouse-c's minimum
+server). Tests are run against ClickHouse 25.8.
 
 ### Build
 
@@ -81,7 +85,7 @@ git submodule update --init
 - lz4 + zstd (`liblz4-dev libzstd-dev`, or `brew install lz4 zstd`) — the native
   protocol's block-compression codecs.
 - libcurl (`libcurl4-openssl-dev` on Debian/Ubuntu; ships with macOS) — the HTTP
-  transport (JSONEachRow POST). CMake hard-requires it (`find_package(CURL)`).
+  transport (FORMAT Native POST). CMake hard-requires it (`find_package(CURL)`).
 
 ## Architecture
 
@@ -98,12 +102,14 @@ git submodule update --init
   binding into the core pipeline, and `VEF_GENERATE_ENTRY_POINTS`.
 - `transport_sink.{h}` — a `Sink` that holds both sub-sinks and dispatches each
   flush to the one named by the `transport` sysvar (`native` | `http`).
+- `event_block.{h,cc}` — the **row→column transpose** shared by both
+  transports (ClickHouse is columnar on the wire): builds one clickhouse-c
+  block, with LowCardinality dictionary encoding for `user`/`client_ip`/
+  `schema`/`sql_command`/`sqlstate`/connect-attrs.
 - `ch_native_sink.{h,cc}` — the native `Sink`: TCP connect (bounded timeout),
-  native-protocol handshake/insert via clickhouse-c, and the **row→column
-  transpose** (ClickHouse is columnar on the wire), with LowCardinality
-  dictionary encoding for `user`/`client_ip`/`schema`/`sql_command`.
-- `http_sink.{h,cc}` — the http `Sink`: builds a ClickHouse JSONEachRow body
-  from the batch and POSTs it via libcurl.
+  native-protocol handshake/insert via clickhouse-c, sending the `EventBlock`.
+- `http_sink.{h,cc}` — the http `Sink`: serializes the `EventBlock` as a
+  ClickHouse `FORMAT Native` body and POSTs it via libcurl.
 - `clickhouse_c_impl.c` — the single TU that compiles the clickhouse-c
   implementation (`CHC_IMPLEMENTATION`).
 
@@ -164,7 +170,8 @@ All source files (`.cc`, `.h`, `.c`) and `CMakeLists.txt` must carry this header
 - **Changing the transport dispatch**: `transport_sink.h`.
 - **Changing capture fields**: `EventRow` and the capture logic live in `core/`
   — change them in `vsql-stat-core` and bump the submodule, not here.
-- **Changing the wire format / transpose**: `ch_native_sink.cc`. Remember the
+- **Changing the wire format / transpose**: `event_block.cc` (both
+  transports). Remember the
   block builder does not copy slabs — per-column backing buffers must outlive
   the block write.
 - **Testing**: add/update `mysql-test/t/*.test`, regenerate with

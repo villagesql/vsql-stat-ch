@@ -118,6 +118,10 @@ while ($chn_marker_count == 0)
 --echo # ordinary strings, proving the dictionary encoding round-tripped.
 --exec curl -s "$ch_url/?query=SELECT%20user%2C%20in_transaction%2C%20status%2C%20query%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
 
+--echo # Client connect-attrs (session_connect_attrs) reach ClickHouse: the
+--echo # client pid is set (value varies per run), and the driver name is shown.
+--exec curl -s "$ch_url/?query=SELECT%20client_pid%20%21%3D%20%27%27%20AS%20client_pid_set%2C%20client_name%2C%20program_name%20FROM%20default.events_raw_native%20WHERE%20query%20LIKE%20%27%25vsql_stat_native_marker%25%27%20FORMAT%20TabSeparatedWithNames"
+
 --echo # digest_text is populated (the normalized statement, e.g. "SELECT ? AS
 --echo # marker"), NOT empty -- and note it arrives even though the
 --echo # statements_digest consumer was forced OFF above, proving the digest
