@@ -49,13 +49,13 @@ export VillageSQL_BUILD_DIR=$HOME/build/villagesql
 `VillageSQL_BUILD_DIR` can point at **either** a from-source VillageSQL build
 tree **or** a prebuilt install (SDK 0.0.7+; see [Requirements](#requirements)) —
 both carry the SDK, `mysql-test/`, and the server at the same relative paths.
-To develop/test against a stable server *without* building it from source, use
-the official installer's prebuilt mode:
+To develop/test against a stable server *without* building it from source,
+install VillageSQL with the [install script](https://villagesql.com/docs/mysql-8.4/stable/quickstart) and choose **Prebuilt**.
+That puts the server, the SDK, and the test harness in `~/.villagesql/prebuilt`
+(no sudo). Then build and run the MTR suite against it:
 
 ```bash
-# installs server + SDK + test harness to ~/.villagesql/prebuilt (no sudo)
-INSTALL_METHOD=prebuilt bash -c "$(curl -fsSL https://install.villagesql.com)"
-./test.sh                # build + run the MTR suite against the prebuilt server
+./test.sh
 ```
 
 After a vanilla prebuilt install no env var is needed: `build.sh`/`test.sh`
