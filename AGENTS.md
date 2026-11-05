@@ -23,8 +23,9 @@ SDK + server. It may point at **either**:
 
 - a **from-source build tree** (e.g. `$HOME/build/villagesql`), or
 - a **prebuilt install** at `$HOME/.villagesql/prebuilt`, produced by the
-  official installer without building the server from source:
-  `INSTALL_METHOD=prebuilt bash -c "$(curl -fsSL https://install.villagesql.com)"`
+  official install script with the Prebuilt method, without building the
+  server from source. The install commands, with and without a terminal, are on
+  https://villagesql.com/docs/mysql-8.4/stable/quickstart.
 
 Both carry `villagesql-extension-sdk-*/`, `mysql-test/`, and `bin/mysqld` at the
 same relative paths, so build + MTR work against either. The prebuilt install is
