@@ -31,11 +31,11 @@ Preview. Requires a server started with `--vsql_allow_preview_extensions=ON`.
 - **ClickHouse 23.3 or newer.** The vendored `clickhouse-c` client refuses to
   talk to anything older (its minimum native-protocol revision is 23.3's). The
   extension is tested against ClickHouse 25.8.
-- **VillageSQL extension SDK 0.0.7 or newer** (`villagesql-extension-sdk-0.0.7-dev`
-  or later under `VillageSQL_BUILD_DIR`). The client connect-attrs columns
-  (`client_pid`, `client_name`, `program_name`) need its statement-event fields;
-  against an older SDK (e.g. a 0.0.6 prebuilt) the build fails with
-  `no member named 'client_pid'`.
+- **VillageSQL extension SDK 0.0.8 or newer** (`villagesql-extension-sdk-0.0.8`
+  or later under `VillageSQL_BUILD_DIR`). The extension's preview capability
+  headers ship in that SDK's default include tree; against an older SDK (e.g. a
+  0.0.7 prebuilt) the build fails with
+  `fatal error: 'villagesql/preview/statement_event.h' file not found`.
 
 ## Build
 
@@ -47,7 +47,7 @@ export VillageSQL_BUILD_DIR=$HOME/build/villagesql
 ```
 
 `VillageSQL_BUILD_DIR` can point at **either** a from-source VillageSQL build
-tree **or** a prebuilt install (SDK 0.0.7+; see [Requirements](#requirements)) —
+tree **or** a prebuilt install (SDK 0.0.8+; see [Requirements](#requirements)) —
 both carry the SDK, `mysql-test/`, and the server at the same relative paths.
 To develop/test against a stable server *without* building it from source,
 install VillageSQL with the [install script](https://villagesql.com/docs/mysql-8.4/stable/quickstart) and choose **Prebuilt**.
