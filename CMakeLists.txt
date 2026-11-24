@@ -22,9 +22,11 @@ set(CMAKE_C_STANDARD 11)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Needs preview::statement_event, preview::thread_worker, preview::sys_var,
-# and preview::status_var, all stable as of SDK v0.0.8 (protocol 5) -- the
-# default include tree, no dev-headers opt-in needed.
+# Uses the preview capabilities vsql::preview::statement_event,
+# vsql::preview::thread_worker, vsql::sys_var and vsql::status_var. As of SDK
+# v0.0.8 (protocol 5) their headers ship in the default include tree, so no
+# dev-headers opt-in is needed. They are still preview: their API and ABI may
+# change.
 find_package(VillageSQL REQUIRED)
 
 # The clickhouse-c native-protocol client is vendored as a git submodule

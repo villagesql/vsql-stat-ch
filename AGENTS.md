@@ -36,8 +36,8 @@ exists** — so after a vanilla `install.villagesql.com` (prebuilt) install, no 
 var is needed at all; just run `./test.sh`. Set the var explicitly to use a
 build tree or a non-default location.
 
-Requirements: SDK **0.0.7+** (the connect-attrs fields `core/` reads; a 0.0.6
-prebuilt fails to compile) and ClickHouse **23.3+** (clickhouse-c's minimum
+Requirements: SDK **0.0.8+** (its default include tree has the preview headers
+and the connect-attrs fields `core/` reads; an older SDK fails to compile) and ClickHouse **23.3+** (clickhouse-c's minimum
 server). Tests are run against ClickHouse 25.8.
 
 ### Build
@@ -78,8 +78,9 @@ git submodule update --init
 
 - VillageSQL Extension Framework SDK — **preview** headers, for the
   statement_event / thread_worker / sys_var / status_var capabilities. All
-  four are stable as of SDK v0.0.8 (protocol 5), so they ship in the default
-  `include/` tree; no `VillageSQL_USE_DEV_HEADERS` opt-in is needed.
+  four are still preview capabilities; as of SDK v0.0.8 (protocol 5) their
+  headers ship in the default `include/` tree, so no
+  `VillageSQL_USE_DEV_HEADERS` opt-in is needed.
 - `clickhouse-c` — the native-protocol client, vendored as a submodule
   (header-only; compiled via one TU, `src/clickhouse_c_impl.c`, that defines
   `CHC_IMPLEMENTATION`).
