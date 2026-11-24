@@ -76,10 +76,10 @@ git submodule update --init
 
 ### Dependencies
 
-- VillageSQL Extension Framework SDK — **preview** headers (`include-dev/`), for
-  the statement_event / thread_worker / sys_var / status_var capabilities. The
-  bundled `cmake/FindVillageSQL.cmake` selects `include-dev/` when
-  `VillageSQL_USE_DEV_HEADERS` is ON (set in `CMakeLists.txt`).
+- VillageSQL Extension Framework SDK — **preview** headers, for the
+  statement_event / thread_worker / sys_var / status_var capabilities. All
+  four are stable as of SDK v0.0.8 (protocol 5), so they ship in the default
+  `include/` tree; no `VillageSQL_USE_DEV_HEADERS` opt-in is needed.
 - `clickhouse-c` — the native-protocol client, vendored as a submodule
   (header-only; compiled via one TU, `src/clickhouse_c_impl.c`, that defines
   `CHC_IMPLEMENTATION`).
